@@ -1136,6 +1136,13 @@ TWITTER_PASSWORD=
 ENVFILE
 chmod 600 "$AGENT_HOME/.claude/.env"
 
+# ── Fix ownership immediately — agent user owns everything in .claude ──
+if [ "$EUID" -eq 0 ]; then
+  mkdir -p "$AGENT_HOME/.claude/debug"
+  chown -R agent:agent "$AGENT_HOME/.claude"
+  chown -R agent:agent "$AGENT_HOME/agent"
+fi
+
 log "All workspace files created"
 
 # =============================================================================
@@ -1295,13 +1302,6 @@ log "Cron jobs configured (8am morning brief, monthly auth reminder)"
 # =============================================================================
 section "Step 8 of 8 — Login + Start + Test"
 
-# ── Fix ownership BEFORE auth — so agent user can read settings.json ──
-if [ "$EUID" -eq 0 ]; then
-  mkdir -p "$AGENT_HOME/.claude/debug"
-  chown -R agent:agent "$AGENT_HOME/.claude"
-  chown -R agent:agent "$AGENT_HOME/.config" 2>/dev/null || true
-fi
-
 # ── Claude Code Auth ──
 echo ""
 echo -e "${BOLD}Claude Code Login${NC}"
@@ -1317,6 +1317,10 @@ if [[ "$AUTH_METHOD" == "2" ]]; then
 }
 CREDFILE
   chmod 600 "$AGENT_HOME/.config/claude/credentials.json"
+  # Fix ownership for agent user
+  if [ "$EUID" -eq 0 ]; then
+    chown -R agent:agent "$AGENT_HOME/.config"
+  fi
   export ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
   log "API key configured — no login required, never expires"
 else
