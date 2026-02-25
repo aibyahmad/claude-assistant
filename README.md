@@ -6,7 +6,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Ubuntu-orange?style=flat-square)
 
-_Want to make your first $10k/month with AI skills like this? → [AI Income Accelerator](https://www.fixeonai.com/ai-income-accelerator)_
+_Want to make your first $10k/month with AI skills like this? → <a href="https://www.fixeonai.com/ai-income-accelerator" target="_blank">AI Income Accelerator</a>_
 
 ---
 
@@ -299,7 +299,7 @@ All of these are configured automatically by the installer:
 
 ## Want to monetize AI skills like this?
 
-If you can build this, you can sell it. I teach you exactly how to package AI into offers, find clients, and hit $10k/month → [AI Income Accelerator](https://www.fixeonai.com/ai-income-accelerator)
+If you can build this, you can sell it. I teach you exactly how to package AI into offers, find clients, and hit $10k/month → <a href="https://www.fixeonai.com/ai-income-accelerator" target="_blank">AI Income Accelerator</a>
 
 ---
 
