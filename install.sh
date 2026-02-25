@@ -403,11 +403,31 @@ def send_telegram_message(msg):
         pass
 
 def send_startup_ping():
-    """Send a ping to Telegram when bot starts"""
+    """Send a ping to Telegram when bot starts and log to db"""
     bot_name = os.environ.get("TELEGRAM_BOT_USERNAME", "Assistant")
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     msg = f"🟢 {bot_name} is online.\n\nStarted at: {now}"
     send_telegram_message(msg)
+
+    # Save to bot.db
+    agent_home = os.environ.get("AGENT_HOME", os.path.expanduser("~"))
+    db_path = os.path.join(agent_home, "telegram-bot", "data", "bot.db")
+    agent_dir = os.path.join(agent_home, "agent")
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS messages
+            (id INTEGER PRIMARY KEY, role TEXT, content TEXT, directory TEXT, timestamp TEXT)
+        """)
+        cursor.execute("""
+            INSERT INTO messages (role, content, directory, timestamp)
+            VALUES ('assistant', ?, ?, datetime('now'))
+        """, (msg, agent_dir))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 def check_pending_continuation():
     """Check if there was a pending task before restart and continue it"""
@@ -1249,26 +1269,41 @@ CREDFILE
   log "API key configured — no login required, never expires"
 else
   # ── Subscription ──
-  echo -e "Claude Code will prompt for login. Here's what to do:"
+  echo -e "Claude Code login:"
   echo ""
-  echo -e "  1. Select ${BOLD}Claude.ai account${NC} when prompted"
-  echo -e "  2. Copy the ${BOLD}URL${NC} it gives you"
-  echo -e "  3. Open it in your browser, log in, get the ${BOLD}code${NC}"
-  echo -e "  4. Paste the code back here"
-  echo -e "  5. It will auto-complete after authentication"
+  echo -e "  1. Select ${BOLD}Claude.ai${NC} and press Enter"
+  echo -e "  2. Copy the URL it gives you"
+  echo -e "  3. Open URL in browser → log in → copy the code"
+  echo -e "  4. Paste the code back and press Enter"
+  echo -e "  5. Type ${BOLD}/exit${NC} or press ${BOLD}Ctrl+C${NC} when done"
   echo ""
-  echo -e "  ${YELLOW}Note:${NC} Authentication typically takes about 60 seconds to verify."
-  echo ""
-  pause "Ready to authenticate"
+  pause "Ready"
 
-  # Use --print mode which triggers OAuth if needed, then auto-exits (no TUI trap)
-  # 60 second timeout as safety net
+  # Trap Ctrl+C so it doesn't kill the install script
+  trap '' INT
   if [ "$EUID" -eq 0 ]; then
-    timeout 60 su -c "HOME=$AGENT_HOME claude --print 'Say: Authentication successful' --dangerously-skip-permissions" agent < /dev/tty 2>&1 || warn "Auth failed or timed out — run 'su agent && claude --print test' manually after setup"
+    su -c "HOME=$AGENT_HOME cd $AGENT_HOME/agent && claude config" agent < /dev/tty || true
   else
-    timeout 60 claude --print "Say: Authentication successful" --dangerously-skip-permissions < /dev/tty 2>&1 || warn "Auth failed or timed out — run 'claude --print test' manually after setup"
+    bash -c "cd $AGENT_HOME/agent && claude config" < /dev/tty || true
   fi
-  log "Subscription login complete — remember to re-auth every 30 days"
+  trap - INT
+
+  # ── Verify authentication succeeded ──
+  echo ""
+  echo -e "Verifying authentication..."
+  AUTH_CHECK=""
+  if [ "$EUID" -eq 0 ]; then
+    AUTH_CHECK=$(su -c "cd $AGENT_HOME/agent && claude --print 'say OK' --dangerously-skip-permissions 2>/dev/null" agent | head -1)
+  else
+    AUTH_CHECK=$(cd $AGENT_HOME/agent && claude --print "say OK" --dangerously-skip-permissions 2>/dev/null | head -1)
+  fi
+
+  if [[ -z "$AUTH_CHECK" ]] || [[ "$AUTH_CHECK" == *"Not logged in"* ]] || [[ "$AUTH_CHECK" == *"error"* ]]; then
+    echo ""
+    error "Authentication failed. Please run the installer again and complete the login step."
+  fi
+
+  log "Subscription login verified — re-auth every 30 days"
 fi
 
 echo ""
@@ -1372,12 +1407,20 @@ Some things I can do:
 
 Say hello to begin!"
 
+# Send to Telegram
 curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
   -d chat_id="${TELEGRAM_USER_ID}" \
   -d text="$SETUP_MSG" \
   -d parse_mode="Markdown" > /dev/null 2>&1 && \
   log "Setup complete message sent to Telegram" || \
   warn "Could not send setup message — but bot should still work"
+
+# Save to bot.db so it appears in conversation history
+DB_PATH="$AGENT_HOME/telegram-bot/data/bot.db"
+ESCAPED_MSG=$(echo "$SETUP_MSG" | sed "s/'/''/g")
+sqlite3 "$DB_PATH" "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, role TEXT, content TEXT, directory TEXT, timestamp TEXT);"
+sqlite3 "$DB_PATH" "INSERT INTO messages (role, content, directory, timestamp) VALUES ('assistant', '$ESCAPED_MSG', '$AGENT_HOME/agent', datetime('now'));"
+log "Setup message saved to conversation history"
 
 # ── Test ──
 echo ""
