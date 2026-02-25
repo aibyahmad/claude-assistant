@@ -131,32 +131,12 @@ while [[ ! "$TELEGRAM_USER_ID" =~ ^[0-9]+$ ]]; do
 done
 log "User ID saved"
 
-echo ""
-ask "Name your assistant (e.g. Nova, Rex, Aria, Sage):"
-read -r AGENT_NAME
-log "Agent name: $AGENT_NAME"
-
-ask "Your name (what the assistant calls you):"
-read -r USER_NAME
-log "Your name: $USER_NAME"
-
-ask "Your timezone (e.g. GMT, EST, PST):"
-read -r USER_TIMEZONE
-log "Timezone: $USER_TIMEZONE"
-
-ask "Your location (e.g. London UK):"
-read -r USER_LOCATION
-log "Location: $USER_LOCATION"
-
-echo ""
-echo -e "${CYAN}─── Morning Brief ───${NC}"
-echo ""
-echo -e "Every morning at ${BOLD}8:00am${NC} your assistant will send you a personalised"
-echo -e "news brief based on your location and interests."
-echo ""
-ask "What are your interests? (e.g. tech, crypto, football, startups, AI, finance):"
-read -r USER_INTERESTS
-log "Interests: $USER_INTERESTS"
+# Personalization happens on first conversation with Claude
+AGENT_NAME="Assistant"
+USER_NAME="User"
+USER_TIMEZONE=""
+USER_LOCATION=""
+USER_INTERESTS=""
 
 echo ""
 echo -e "${CYAN}─── Permission Level ───${NC}"
@@ -925,8 +905,8 @@ All output is logged to \`${AGENT_HOME}/telegram-bot/data/bot.db\` so replies in
 
 | Script | When | Type |
 |--------|------|------|
-| \`morning_brief.sh\` | 8:00am daily | AI task |
 | \`auth_reminder.sh\` | 25th of every month, 9am | Simple reminder |
+| \`morning_brief.sh\` | (created after personalization) | AI task |
 
 To see what's scheduled: \`crontab -l\`
 To see logs: \`tail -f /var/log/agent-cron.log\`
@@ -1100,9 +1080,15 @@ cat > "$AGENT_HOME/.claude/MEMORY.md" << 'MEMORYMD'
 
 ## Setup Tasks (Do these on first conversation)
 
-- [ ] Install find-skills: `npx skills add https://github.com/vercel-labs/skills --skill find-skills`
-- [ ] Install skill-creator: `npx skills add https://github.com/anthropics/skills --skill skill-creator`
-- [ ] Mark these done after installing
+1. [ ] Ask user: "What should I call you?" → Update USER.md and SOUL.md
+2. [ ] Ask user: "What would you like to name me?" → Update SOUL.md and CLAUDE.md
+3. [ ] Ask user: "What's your timezone?" → Update USER.md
+4. [ ] Ask user: "Where are you based?" → Update USER.md
+5. [ ] Ask user: "What topics interest you? (news, tech, crypto, sports, etc.)" → Update USER.md
+6. [ ] After gathering info, silently create the morning brief cron job using CRON.md templates
+7. [ ] Install find-skills: `npx skills add https://github.com/vercel-labs/skills --skill find-skills`
+8. [ ] Install skill-creator: `npx skills add https://github.com/anthropics/skills --skill skill-creator`
+9. [ ] Mark all done after completing
 
 ## About the User
 
@@ -1166,68 +1152,8 @@ log "Sessions folder locked to owner only"
 mkdir -p "$AGENT_HOME/.claude/scheduler"
 log "Scheduler folder created at $AGENT_HOME/.claude/scheduler/"
 
-# ── Morning brief script ──
-cat > "$AGENT_HOME/.claude/scheduler/morning_brief.sh" << BRIEFSCRIPT
-#!/bin/bash
-# ─────────────────────────────────────────────────────────────
-# MORNING BRIEF — runs at 8am daily
-# Runs from ${AGENT_HOME}/agent/ so replies have full context
-# IMPORTANT: Uses absolute paths, never ~
-# ─────────────────────────────────────────────────────────────
-
-# Define AGENT_HOME (fallback if not set by cron environment)
-AGENT_HOME="\${AGENT_HOME:-${AGENT_HOME}}"
-
-source "\${AGENT_HOME}/.claude/.env"
-LOG="/var/log/agent-cron.log"
-AGENT_DIR="\${AGENT_HOME}/agent"
-DB="\${AGENT_HOME}/telegram-bot/data/bot.db"
-
-echo "[\$(date)] Starting morning brief..." >> \$LOG
-
-cd "\$AGENT_DIR"
-
-PROMPT="You are ${AGENT_NAME}, a personal assistant for ${USER_NAME}.
-
-Run the morning brief. Do the following in order:
-
-1. Search the web for the latest news TODAY relevant to these interests: ${USER_INTERESTS}
-2. Focus on news from or relevant to: ${USER_LOCATION}
-3. Pick the 3 to 5 most interesting or important stories
-4. For each story write:
-   - Headline
-   - One sentence summary
-   - Why it matters to someone interested in ${USER_INTERESTS}
-5. Start with: Good morning ${USER_NAME}. Here is your morning brief.
-6. End with: Today is [day and full date].
-
-Keep it tight. No fluff. Scannable in under 2 minutes."
-
-if [[ -n "\${ANTHROPIC_API_KEY}" ]]; then
-  BRIEF=\$(ANTHROPIC_API_KEY="\${ANTHROPIC_API_KEY}" claude --print "\$PROMPT" --dangerously-skip-permissions 2>> \$LOG)
-else
-  BRIEF=\$(claude --print "\$PROMPT" --dangerously-skip-permissions 2>> \$LOG)
-fi
-
-if [[ -n "\$BRIEF" ]]; then
-  # Send to Telegram
-  curl -s -X POST "https://api.telegram.org/bot\${TELEGRAM_BOT_TOKEN}/sendMessage" \\
-    -d chat_id="\${TELEGRAM_USER_ID}" \\
-    -d text="\$BRIEF" \\
-    -d parse_mode="Markdown" >> \$LOG 2>&1
-
-  # Log to conversations.db so replies have full context
-  ESCAPED=\$(echo "\$BRIEF" | sed "s/'/''/g")
-  sqlite3 "\$DB" "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, role TEXT, content TEXT, directory TEXT, timestamp TEXT);"
-  sqlite3 "\$DB" "INSERT INTO messages (role, content, directory, timestamp) VALUES ('assistant', '\$ESCAPED', '\$AGENT_DIR', datetime('now'));"
-
-  echo "[\$(date)] Morning brief sent and logged." >> \$LOG
-else
-  echo "[\$(date)] Morning brief failed — no output from Claude." >> \$LOG
-fi
-BRIEFSCRIPT
-chmod +x "$AGENT_HOME/.claude/scheduler/morning_brief.sh"
-log "morning_brief.sh created in scheduler/"
+# Morning brief will be created by Claude after gathering user preferences
+# See MEMORY.md setup tasks
 
 # ── Auth reminder script ──
 cat > "$AGENT_HOME/.claude/scheduler/auth_reminder.sh" << AUTHSCRIPT
@@ -1275,11 +1201,10 @@ PATH=/usr/local/bin:/usr/bin:/bin:${AGENT_HOME}/.local/bin
 # All scheduled jobs live in: ${AGENT_HOME}/.claude/scheduler/
 # All scripts run from ${AGENT_HOME}/agent/ — never change directory
 
-# MORNING BRIEF — 8:00am daily
-0 8 * * * ${AGENT_HOME}/.claude/scheduler/morning_brief.sh >> /var/log/agent-cron.log 2>&1
-
 # AUTH REMINDER — 25th of every month at 9am
 0 9 25 * * ${AGENT_HOME}/.claude/scheduler/auth_reminder.sh >> /var/log/agent-cron.log 2>&1
+
+# Morning brief will be added by Claude after personalization
 CRONEOF
 
 if [ "$EUID" -eq 0 ]; then
@@ -1294,7 +1219,7 @@ if [ "$EUID" -eq 0 ]; then
   chown agent:agent /var/log/agent-cron.log
 fi
 chmod 664 /var/log/agent-cron.log
-log "Cron jobs configured (8am morning brief, monthly auth reminder)"
+log "Cron jobs configured (monthly auth reminder)"
 
 # =============================================================================
 # STEP 8 — CLAUDE AUTH + START BOT + TEST
@@ -1434,18 +1359,18 @@ fi
 sleep 2
 SETUP_MSG="✅ *Setup Complete*
 
-Hey ${USER_NAME}, I'm ${AGENT_NAME} — your personal AI assistant.
+Hey! I'm your new personal AI assistant, running 24/7 on this VPS.
 
-I'm now running 24/7 on this VPS. Text me anything and I'll get to work.
+Send me a message to get started — I'll ask a few questions to personalize your experience, then I'm ready to work.
 
 Some things I can do:
 • Answer questions and have conversations
 • Run commands and write code
 • Search the web for current info
 • Set up scheduled tasks and reminders
-• Send you a morning brief every day at 8am
+• Automate browser tasks
 
-Try sending me a message now to make sure everything works."
+Say hello to begin!"
 
 curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
   -d chat_id="${TELEGRAM_USER_ID}" \
