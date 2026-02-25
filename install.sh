@@ -623,12 +623,12 @@ mkdir -p "$AGENT_HOME/agent"
 # Install meta-skills (as agent user to avoid npm cache in /root)
 log "Installing meta-skills..."
 if [ "$EUID" -eq 0 ]; then
-  su -c "cd $AGENT_HOME/.claude/skills && npx skills add https://github.com/vercel-labs/skills --skill find-skills" agent > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skills add https://github.com/vercel-labs/skills --skill find-skills"
-  su -c "cd $AGENT_HOME/.claude/skills && npx skills add https://github.com/anthropics/skills --skill skill-creator" agent > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skills add https://github.com/anthropics/skills --skill skill-creator"
+  su -c "cd $AGENT_HOME/.claude/skills && yes | npx skills add https://github.com/vercel-labs/skills --skill find-skills" agent > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skills add https://github.com/vercel-labs/skills --skill find-skills"
+  su -c "cd $AGENT_HOME/.claude/skills && yes | npx skills add https://github.com/anthropics/skills --skill skill-creator" agent > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skills add https://github.com/anthropics/skills --skill skill-creator"
 else
   cd "$AGENT_HOME/.claude/skills"
-  npx skills add https://github.com/vercel-labs/skills --skill find-skills > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skills add https://github.com/vercel-labs/skills --skill find-skills"
-  npx skills add https://github.com/anthropics/skills --skill skill-creator > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skills add https://github.com/anthropics/skills --skill skill-creator"
+  yes | npx skills add https://github.com/vercel-labs/skills --skill find-skills > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skills add https://github.com/vercel-labs/skills --skill find-skills"
+  yes | npx skills add https://github.com/anthropics/skills --skill skill-creator > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skills add https://github.com/anthropics/skills --skill skill-creator"
   cd "$AGENT_HOME"
 fi
 
@@ -1294,6 +1294,13 @@ log "Cron jobs configured (8am morning brief, monthly auth reminder)"
 # STEP 8 — CLAUDE AUTH + START BOT + TEST
 # =============================================================================
 section "Step 8 of 8 — Login + Start + Test"
+
+# ── Fix ownership BEFORE auth — so agent user can read settings.json ──
+if [ "$EUID" -eq 0 ]; then
+  mkdir -p "$AGENT_HOME/.claude/debug"
+  chown -R agent:agent "$AGENT_HOME/.claude"
+  chown -R agent:agent "$AGENT_HOME/.config" 2>/dev/null || true
+fi
 
 # ── Claude Code Auth ──
 echo ""
