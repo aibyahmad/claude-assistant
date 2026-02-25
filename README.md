@@ -21,13 +21,19 @@ Text it like a person. It remembers everything. It runs tasks while you sleep.
 ## What You Get
 
 - **Telegram interface** — text your assistant from anywhere, on any device, 24/7
+- **Voice messages** — send voice notes via Telegram, transcribed locally with faster-whisper (no external API)
+- **Image support** — send images via Telegram, Claude sees and analyzes them directly
 - **Custom identity** — your assistant has a name, personality, and tone defined by you. Not a generic bot.
+- **Context injection** — Claude Code hooks auto-inject identity files (SOUL.md, USER.md, MEMORY.md) and recent conversation history on every message
 - **Persistent memory** — MEMORY.md auto-updated across every session. It never forgets what matters.
 - **Full conversation history** — every message logged to SQLite. Claude queries it before ever saying "I don't remember."
+- **Startup notifications** — get a ping when the bot restarts so you know it's back online
+- **Conversation continuation** — tell it "restart, then do X" and it picks up where it left off after reboot
 - **Morning brief** — personalised daily news based on your interests and location, sent at 8am
 - **Proactive scheduling** — mention a recurring task or reminder once, it creates the script and schedules it automatically
 - **Web search** — searches the web when it needs current information, knows when to use it vs browser automation
 - **Browser automation** — logs into Gmail, Twitter, LinkedIn, and more on your behalf via Patchright (anti-detection)
+- **Residential proxies** — optional static residential/ISP proxy support for Patchright to bypass anti-bot detection
 - **Skills system** — install from [skills.sh](https://skills.sh) with one command, or write your own. The assistant applies relevant skills automatically.
 - **File uploads** — send files via Telegram, Claude reads and works with them directly
 - **Git integration** — built in, can manage repos from Telegram
@@ -90,6 +96,7 @@ The installer walks you through everything interactively. No config files to edi
 - Your Telegram User ID (from @userinfobot)
 - Your assistant's name, your name, timezone, location
 - Your interests (used for the morning brief)
+- Residential proxy URL (optional, for browser automation)
 - Permission level — full auto or Telegram approvals
 - Model — Sonnet 4.6, Opus 4.6, or Haiku 4.5
 
@@ -97,6 +104,7 @@ The installer walks you through everything interactively. No config files to edi
 
 - Node.js, Claude Code, PM2
 - Python, Patchright, Chromium
+- faster-whisper (local voice transcription)
 - The Telegram bot (RichardAtCT/claude-code-telegram)
 - UFW firewall (SSH only)
 
@@ -108,9 +116,10 @@ The installer walks you through everything interactively. No config files to edi
 - `MEMORY.md` — long-term memory, auto-updated
 - `CRON.md` — scheduler rules and script templates
 - `settings.json` — model and permission config
+- `hooks.json` — Claude Code hooks that inject identity + conversation history
 - `~/.claude/scheduler/` — all scheduled scripts live here
 - Cron jobs wired to the scheduler scripts
-- PM2 auto-restart on reboot
+- PM2 auto-restart on reboot with startup ping
 
 **It starts everything and tests it live.**
 
@@ -156,6 +165,7 @@ You choose during setup. Change it later: `nano ~/.claude/settings.json`
   MEMORY.md          ← long-term memory, auto-updated
   CRON.md            ← scheduler rules and script templates
   settings.json      ← model + permission config
+  hooks.json         ← Claude Code hooks for context injection
   .env               ← credentials (chmod 600)
   /sessions/         ← saved browser sessions (Gmail, Twitter, etc.)
   /skills/           ← specialised skill files
@@ -165,7 +175,7 @@ You choose during setup. Change it later: `nano ~/.claude/settings.json`
 
 ~/agent/             ← working directory — everything runs from here
 ~/telegram-bot/      ← Telegram bot code
-~/venv/              ← Python venv (Patchright)
+~/venv/              ← Python venv (Patchright, faster-whisper)
 ```
 
 ---
@@ -284,6 +294,22 @@ All of these are configured automatically by the installer:
 
 ---
 
+## Residential Proxies (Optional)
+
+Static residential or ISP proxies help Patchright bypass anti-bot detection when logging into services like Gmail, Twitter, and LinkedIn.
+
+**Recommended:** Static residential or static ISP proxies (not rotating residential).
+
+The installer asks for your proxy URL during setup. Skip if you don't have one — add it later by editing `~/.claude/.env`:
+
+```bash
+PROXY_URL=http://username:password@host:port
+```
+
+**Providers:** Smartproxy, Bright Data, IPRoyal, Oxylabs
+
+---
+
 ## Stack
 
 | Component                                                                   | Role                                        |
@@ -291,6 +317,7 @@ All of these are configured automatically by the installer:
 | [Claude Code](https://claude.ai/code)                                       | The AI brain                                |
 | [claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram) | Telegram interface                          |
 | [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)            | Browser automation (anti-detection)         |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper)                 | Local voice transcription                   |
 | PM2                                                                         | Process management + auto-restart on reboot |
 | SQLite                                                                      | Conversation history across sessions        |
 | UFW                                                                         | Firewall                                    |

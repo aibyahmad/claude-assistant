@@ -113,12 +113,22 @@ fi
 echo ""
 ask "Telegram Bot Token:"
 read -r TELEGRAM_BOT_TOKEN
+while [[ ! "$TELEGRAM_BOT_TOKEN" =~ ^[0-9]+:.+ ]]; do
+  warn "Token should look like: 123456789:ABCdefGHI... — try again"
+  ask "Telegram Bot Token:"
+  read -r TELEGRAM_BOT_TOKEN
+done
 log "Bot token saved"
 
 echo ""
 echo -e "To get your Telegram User ID: message ${BOLD}@userinfobot${NC} on Telegram"
 ask "Telegram User ID (numbers only):"
 read -r TELEGRAM_USER_ID
+while [[ ! "$TELEGRAM_USER_ID" =~ ^[0-9]+$ ]]; do
+  warn "User ID should be numbers only — try again"
+  ask "Telegram User ID:"
+  read -r TELEGRAM_USER_ID
+done
 log "User ID saved"
 
 echo ""
@@ -210,6 +220,36 @@ esac
 log "Model: $MODEL_NAME"
 
 echo ""
+echo -e "${CYAN}─── Residential Proxies (Optional) ───${NC}"
+echo ""
+echo -e "Static residential / ISP proxies help Patchright bypass anti-bot detection."
+echo -e "You can add this later by editing ${BOLD}~/.claude/.env${NC}"
+echo ""
+echo -e "  ${BOLD}1) Skip${NC} — no proxies (default)"
+echo -e "  ${BOLD}2) Add proxy${NC} — paste your proxy URL"
+echo ""
+ask "Enter 1 or 2 (default: 1):"
+read -r PROXY_CHOICE
+PROXY_CHOICE="${PROXY_CHOICE:-1}"
+
+PROXY_URL=""
+if [[ "$PROXY_CHOICE" == "2" ]]; then
+  echo ""
+  echo -e "Paste your proxy URL from your provider dashboard."
+  echo -e "Format: ${BOLD}http://username:password@host:port${NC}"
+  echo ""
+  ask "Proxy URL:"
+  read -r PROXY_URL
+  if [[ -n "$PROXY_URL" ]]; then
+    log "Proxy configured"
+  else
+    warn "No proxy entered — skipping"
+  fi
+else
+  log "No proxy configured — add later in ~/.claude/.env"
+fi
+
+echo ""
 log "All information collected. Installing now..."
 sleep 1
 
@@ -217,8 +257,9 @@ sleep 1
 # STEP 2 — SYSTEM
 # =============================================================================
 section "Step 2 of 8 — System Setup"
-apt-get update -qq && apt-get upgrade -y -qq
-apt-get install -y -qq curl wget git sqlite3 ufw build-essential python3 python3-pip python3-venv
+apt-get update -qq || error "apt-get update failed — check your internet connection"
+apt-get upgrade -y -qq || warn "apt-get upgrade had issues — continuing anyway"
+apt-get install -y -qq curl wget git sqlite3 ufw build-essential python3 python3-pip python3-venv || error "Failed to install required packages"
 log "System updated"
 
 if [ "$EUID" -eq 0 ]; then
@@ -245,18 +286,18 @@ fi
 section "Step 3 of 8 — Node.js + Claude Code + PM2"
 
 if ! command -v node &>/dev/null; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
-  apt-get install -y -qq nodejs
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1 || error "Failed to download Node.js setup"
+  apt-get install -y -qq nodejs || error "Failed to install Node.js"
 fi
 log "Node.js: $(node --version)"
 
 if ! command -v claude &>/dev/null; then
-  npm install -g @anthropic-ai/claude-code --silent
+  npm install -g @anthropic-ai/claude-code --silent || error "Failed to install Claude Code"
 fi
 log "Claude Code installed"
 
 if ! command -v pm2 &>/dev/null; then
-  npm install -g pm2 --silent
+  npm install -g pm2 --silent || error "Failed to install PM2"
 fi
 log "PM2 installed"
 
@@ -265,11 +306,17 @@ log "PM2 installed"
 # =============================================================================
 section "Step 4 of 8 — Patchright (browser automation)"
 
-python3 -m venv "$AGENT_HOME/venv"
-source "$AGENT_HOME/venv/bin/activate"
-pip install -q patchright
-python -m patchright install chromium
-deactivate
+# Create venv and install Patchright as agent user (not root)
+if [ "$EUID" -eq 0 ]; then
+  su -c "python3 -m venv $AGENT_HOME/venv" agent
+  su -c "source $AGENT_HOME/venv/bin/activate && pip install -q patchright && python -m patchright install chromium" agent
+else
+  python3 -m venv "$AGENT_HOME/venv"
+  source "$AGENT_HOME/venv/bin/activate"
+  pip install -q patchright
+  python -m patchright install chromium
+  deactivate
+fi
 log "Patchright + Chromium installed"
 
 # =============================================================================
@@ -278,15 +325,271 @@ log "Patchright + Chromium installed"
 section "Step 5 of 8 — Telegram Bot"
 
 TELEGRAM_DIR="$AGENT_HOME/telegram-bot"
+
+# Clone bot repo as agent user (not root) to ensure correct ownership
 if [ ! -d "$TELEGRAM_DIR" ]; then
-  git clone -q https://github.com/RichardAtCT/claude-code-telegram.git "$TELEGRAM_DIR"
+  if [ "$EUID" -eq 0 ]; then
+    su -c "git clone -q https://github.com/RichardAtCT/claude-code-telegram.git $TELEGRAM_DIR" agent
+  else
+    git clone -q https://github.com/RichardAtCT/claude-code-telegram.git "$TELEGRAM_DIR"
+  fi
 fi
 
-source "$AGENT_HOME/venv/bin/activate"
-pip install -q poetry 2>/dev/null || true
+# Install poetry via pipx for the agent user (works on modern Ubuntu with externally-managed Python)
+apt install -y pipx > /dev/null 2>&1 || true
+su -c "pipx install poetry" agent > /dev/null 2>&1 || true
+su -c "pipx ensurepath" agent > /dev/null 2>&1 || true
+
 cd "$TELEGRAM_DIR"
-poetry install -q 2>/dev/null || pip install -q -r requirements.txt 2>/dev/null || true
-deactivate
+
+# =============================================================================
+# BOT CUSTOMIZATIONS — Applied inline after cloning original repo
+# =============================================================================
+
+# ── Install faster-whisper for voice transcription (as agent user) ──
+if [ "$EUID" -eq 0 ]; then
+  su -c "cd $TELEGRAM_DIR && $AGENT_HOME/.local/bin/poetry add faster-whisper" agent 2>/dev/null || \
+    su -c "pip install -q --break-system-packages faster-whisper" agent 2>/dev/null || true
+else
+  cd "$TELEGRAM_DIR" && poetry add faster-whisper 2>/dev/null || pip install -q faster-whisper 2>/dev/null || true
+fi
+log "faster-whisper installed for voice transcription"
+
+# ── Create voice handler module ──
+cat > "$TELEGRAM_DIR/src/voice_handler.py" << 'VOICEPY'
+"""Voice message transcription using faster-whisper"""
+import os
+import tempfile
+from pathlib import Path
+
+try:
+    from faster_whisper import WhisperModel
+    WHISPER_AVAILABLE = True
+except ImportError:
+    WHISPER_AVAILABLE = False
+
+_model = None
+
+def get_whisper_model():
+    """Lazy load whisper model"""
+    global _model
+    if _model is None and WHISPER_AVAILABLE:
+        _model = WhisperModel("base", device="cpu", compute_type="int8")
+    return _model
+
+def transcribe_voice(audio_path: str) -> str:
+    """Transcribe audio file to text"""
+    if not WHISPER_AVAILABLE:
+        return "[Voice transcription unavailable - faster-whisper not installed]"
+
+    model = get_whisper_model()
+    if model is None:
+        return "[Voice transcription failed - model not loaded]"
+
+    try:
+        segments, _ = model.transcribe(audio_path, beam_size=5)
+        text = " ".join([segment.text for segment in segments]).strip()
+        return text if text else "[No speech detected]"
+    except Exception as e:
+        return f"[Transcription error: {str(e)}]"
+VOICEPY
+log "Voice handler created"
+
+# ── Patch main.py to add startup ping and voice handling ──
+# First, backup original
+cp "$TELEGRAM_DIR/src/main.py" "$TELEGRAM_DIR/src/main.py.bak"
+
+# Add startup ping and conversation continuation after restart
+cat > "$TELEGRAM_DIR/src/startup_hook.py" << 'STARTUPPY'
+"""Startup notification and conversation continuation hook"""
+import os
+import subprocess
+import sqlite3
+from datetime import datetime
+
+def send_telegram_message(msg):
+    """Send a message to Telegram"""
+    import requests
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    user_id = os.environ.get("ALLOWED_USERS", "").split(",")[0].strip()
+    if not token or not user_id:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": user_id, "text": msg, "parse_mode": "Markdown"}
+        )
+    except Exception:
+        pass
+
+def send_startup_ping():
+    """Send a ping to Telegram when bot starts"""
+    bot_name = os.environ.get("TELEGRAM_BOT_USERNAME", "Assistant")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    msg = f"🟢 {bot_name} is online.\n\nStarted at: {now}"
+    send_telegram_message(msg)
+
+def check_pending_continuation():
+    """Check if there was a pending task before restart and continue it"""
+    agent_home = os.environ.get("AGENT_HOME", os.path.expanduser("~"))
+    db_path = os.path.join(agent_home, "telegram-bot", "data", "bot.db")
+
+    if not os.path.exists(db_path):
+        return
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Get last 5 messages to check for restart context
+        cursor.execute("""
+            SELECT role, content, timestamp
+            FROM messages
+            ORDER BY timestamp DESC
+            LIMIT 5
+        """)
+        messages = cursor.fetchall()
+        conn.close()
+
+        if not messages:
+            return
+
+        # Check if assistant's last message mentioned restarting
+        restart_keywords = ['restart', 'reboot', 'updating', 'upgrade']
+        found_restart_context = False
+        pending_instruction = None
+
+        for role, content, ts in messages:
+            content_lower = content.lower() if content else ""
+            if any(kw in content_lower for kw in restart_keywords):
+                found_restart_context = True
+            # Check if user gave instructions that include post-restart tasks
+            if role == 'user' and found_restart_context:
+                # User message that triggered the restart - might have follow-up instructions
+                if 'then' in content_lower or 'after' in content_lower:
+                    pending_instruction = content
+                    break
+
+        if found_restart_context and pending_instruction:
+            # There was a restart and user had follow-up instructions
+            # Call Claude to continue the task
+            agent_dir = os.path.join(agent_home, "agent")
+            prompt = f"""You just restarted successfully. Before the restart, the user asked:
+
+"{pending_instruction}"
+
+The restart is complete. Now continue with any remaining tasks from that instruction. If the instruction was just to restart, confirm it's done. If there were follow-up tasks (like "then tell me X"), do them now."""
+
+            try:
+                result = subprocess.run(
+                    ["claude", "--print", prompt, "--dangerously-skip-permissions"],
+                    cwd=agent_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                if result.stdout.strip():
+                    send_telegram_message(result.stdout.strip())
+                    # Log to database
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO messages (role, content, timestamp)
+                        VALUES ('assistant', ?, datetime('now'))
+                    """, (result.stdout.strip(),))
+                    conn.commit()
+                    conn.close()
+            except Exception as e:
+                print(f"Continuation failed: {e}")
+
+    except Exception as e:
+        print(f"Pending check failed: {e}")
+STARTUPPY
+log "Startup hook with conversation continuation created"
+
+# ── Create wrapper script that calls startup ping, checks for pending tasks, then runs the bot ──
+cat > "$TELEGRAM_DIR/run_bot.py" << 'RUNBOTPY'
+#!/usr/bin/env python3
+"""Wrapper script that sends startup ping, continues pending tasks, then runs the main bot"""
+import sys
+import os
+
+# Add src to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+
+# Send startup ping
+try:
+    from startup_hook import send_startup_ping
+    send_startup_ping()
+except Exception as e:
+    print(f"Startup ping failed (non-fatal): {e}")
+
+# Check for pending tasks from before restart and continue them
+try:
+    from startup_hook import check_pending_continuation
+    check_pending_continuation()
+except Exception as e:
+    print(f"Continuation check failed (non-fatal): {e}")
+
+# Now run the actual bot
+if __name__ == "__main__":
+    # Import and run the main module
+    from src import main
+    if hasattr(main, 'main'):
+        main.main()
+    elif hasattr(main, 'run'):
+        main.run()
+    else:
+        # If main.py runs on import, it's already running
+        pass
+RUNBOTPY
+chmod +x "$TELEGRAM_DIR/run_bot.py"
+log "Bot wrapper with startup ping and continuation created"
+
+# ── Create image handler for saving images to files ──
+cat > "$TELEGRAM_DIR/src/image_handler.py" << 'IMAGEPY'
+"""Image handling - save images to files so Claude can read them"""
+import os
+import tempfile
+from pathlib import Path
+from datetime import datetime
+
+IMAGES_DIR = Path(os.environ.get("AGENT_HOME", os.path.expanduser("~"))) / "agent" / "images"
+
+def ensure_images_dir():
+    """Ensure images directory exists"""
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    return IMAGES_DIR
+
+def save_image(image_data: bytes, extension: str = "jpg") -> str:
+    """Save image data to file and return path"""
+    images_dir = ensure_images_dir()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"image_{timestamp}.{extension}"
+    filepath = images_dir / filename
+
+    with open(filepath, "wb") as f:
+        f.write(image_data)
+
+    return str(filepath)
+
+def get_image_prompt(filepath: str) -> str:
+    """Generate prompt telling Claude to read the image"""
+    return f"[User sent an image. The image has been saved to: {filepath}. Use the Read tool to view and analyze it.]"
+IMAGEPY
+log "Image handler created"
+
+# ── Ensure data directory exists for bot database ──
+mkdir -p "$TELEGRAM_DIR/data"
+log "Bot data directory created"
+
+# ── Install dependencies (as agent user) ──
+if [ "$EUID" -eq 0 ]; then
+  su -c "cd $TELEGRAM_DIR && $AGENT_HOME/.local/bin/poetry install -q" agent 2>/dev/null || \
+    su -c "cd $TELEGRAM_DIR && pip install -q --break-system-packages -r requirements.txt" agent 2>/dev/null || true
+else
+  cd "$TELEGRAM_DIR" && poetry install -q 2>/dev/null || pip install -q -r requirements.txt 2>/dev/null || true
+fi
 
 cat > "$TELEGRAM_DIR/.env" << BOTENV
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
@@ -298,6 +601,12 @@ ANTHROPIC_MODEL=${CLAUDE_MODEL}
 USE_SDK=true
 ENABLE_FILE_UPLOADS=true
 ENABLE_GIT_INTEGRATION=true
+# Prevent nested session detection when bot spawns Claude Code
+CLAUDECODE=
+# Agent home for image handler and other paths
+AGENT_HOME=${AGENT_HOME}
+# Database for conversation history (bot uses this path)
+DATABASE_URL=sqlite:///${AGENT_HOME}/telegram-bot/data/bot.db
 BOTENV
 chmod 600 "$TELEGRAM_DIR/.env"
 log "Telegram bot installed and configured"
@@ -311,12 +620,17 @@ mkdir -p "$AGENT_HOME/.claude/sessions"
 mkdir -p "$AGENT_HOME/.claude/skills"
 mkdir -p "$AGENT_HOME/agent"
 
-# Install meta-skills from skills.sh
+# Install meta-skills from skills.sh (as agent user to avoid npm cache in /root)
 log "Installing meta-skills from skills.sh..."
-cd "$AGENT_HOME/.claude/skills"
-npx skillsadd vercel-labs/skills/find-skills --yes > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skillsadd vercel-labs/skills/find-skills"
-npx skillsadd anthropics/skills/skill-creator --yes > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skillsadd anthropics/skills/skill-creator"
-cd "$AGENT_HOME"
+if [ "$EUID" -eq 0 ]; then
+  su -c "cd $AGENT_HOME/.claude/skills && npx skillsadd vercel-labs/skills/find-skills --yes" agent > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skillsadd vercel-labs/skills/find-skills"
+  su -c "cd $AGENT_HOME/.claude/skills && npx skillsadd anthropics/skills/skill-creator --yes" agent > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skillsadd anthropics/skills/skill-creator"
+else
+  cd "$AGENT_HOME/.claude/skills"
+  npx skillsadd vercel-labs/skills/find-skills --yes > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skillsadd vercel-labs/skills/find-skills"
+  npx skillsadd anthropics/skills/skill-creator --yes > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skillsadd anthropics/skills/skill-creator"
+  cd "$AGENT_HOME"
+fi
 
 # Claude Code global settings — based on permission level chosen during onboarding
 mkdir -p "$AGENT_HOME/.claude"
@@ -339,7 +653,19 @@ if [[ "$PERMISSION_LEVEL" == "1" ]]; then
     ],
     "deny": []
   },
-  "dangerouslySkipPermissions": true
+  "dangerouslySkipPermissions": true,
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '=== SOUL ===' && cat ${AGENT_HOME}/.claude/SOUL.md 2>/dev/null && echo '' && echo '=== USER ===' && cat ${AGENT_HOME}/.claude/USER.md 2>/dev/null && echo '' && echo '=== MEMORY ===' && cat ${AGENT_HOME}/.claude/MEMORY.md 2>/dev/null && echo '' && echo '=== CRON ===' && cat ${AGENT_HOME}/.claude/CRON.md 2>/dev/null && echo '' && echo '=== RECENT CONVERSATION (last 20 messages) ===' && sqlite3 ${AGENT_HOME}/telegram-bot/data/bot.db \"SELECT datetime(timestamp,'localtime') || ' [' || role || ']: ' || substr(content,1,500) FROM messages ORDER BY timestamp DESC LIMIT 20;\" 2>/dev/null | tac || true"
+          }
+        ]
+      }
+    ]
+  }
 }
 SETTINGSJSON
   log "Permissions: Full auto — Claude runs everything without asking"
@@ -358,7 +684,19 @@ else
     ],
     "deny": []
   },
-  "dangerouslySkipPermissions": false
+  "dangerouslySkipPermissions": false,
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '=== SOUL ===' && cat ${AGENT_HOME}/.claude/SOUL.md 2>/dev/null && echo '' && echo '=== USER ===' && cat ${AGENT_HOME}/.claude/USER.md 2>/dev/null && echo '' && echo '=== MEMORY ===' && cat ${AGENT_HOME}/.claude/MEMORY.md 2>/dev/null && echo '' && echo '=== CRON ===' && cat ${AGENT_HOME}/.claude/CRON.md 2>/dev/null && echo '' && echo '=== RECENT CONVERSATION (last 20 messages) ===' && sqlite3 ${AGENT_HOME}/telegram-bot/data/bot.db \"SELECT datetime(timestamp,'localtime') || ' [' || role || ']: ' || substr(content,1,500) FROM messages ORDER BY timestamp DESC LIMIT 20;\" 2>/dev/null | tac || true"
+          }
+        ]
+      }
+    ]
+  }
 }
 SETTINGSJSON
   log "Permissions: Telegram approvals — you will be asked before commands run"
@@ -371,10 +709,10 @@ cat > "$AGENT_HOME/.claude/CLAUDE.md" << CLAUDEMD
 
 ## Startup Sequence
 On every single session, no matter what, read these files first in this order:
-1. \`~/.claude/SOUL.md\` — who you are
-2. \`~/.claude/USER.md\` — who the user is
-3. \`~/.claude/MEMORY.md\` — what you remember
-4. \`~/.claude/CRON.md\` — scheduled tasks and how to create new ones
+1. \`${AGENT_HOME}/.claude/SOUL.md\` — who you are
+2. \`${AGENT_HOME}/.claude/USER.md\` — who the user is
+3. \`${AGENT_HOME}/.claude/MEMORY.md\` — what you remember
+4. \`${AGENT_HOME}/.claude/CRON.md\` — scheduled tasks and how to create new ones
 
 Do not respond to anything until you have read all four.
 
@@ -388,7 +726,7 @@ Embody the identity in SOUL.md fully at all times.
 ---
 
 ## Memory
-- Long term memory lives in \`~/.claude/MEMORY.md\`
+- Long term memory lives in \`${AGENT_HOME}/.claude/MEMORY.md\`
 - Update MEMORY.md whenever something important is said, decided, or learned
 - Do not wait to be asked — if something matters, write it immediately
 - Keep MEMORY.md clean and organised. Distill, don't dump.
@@ -396,15 +734,15 @@ Embody the identity in SOUL.md fully at all times.
 ---
 
 ## Conversation History
-- All conversations are saved in \`~/.claude/conversations.db\`
-- Every message is tagged with the directory it was in
+- All conversations are saved in \`${AGENT_HOME}/telegram-bot/data/bot.db\`
+- The Telegram bot maintains this database
 - Query for past context:
   \`\`\`
-  sqlite3 ~/.claude/conversations.db "SELECT * FROM messages ORDER BY timestamp DESC LIMIT 50;"
+  sqlite3 ${AGENT_HOME}/telegram-bot/data/bot.db "SELECT * FROM messages ORDER BY timestamp DESC LIMIT 50;"
   \`\`\`
-- Query by task:
+- Query by content:
   \`\`\`
-  sqlite3 ~/.claude/conversations.db "SELECT * FROM messages WHERE directory LIKE '%taskname%' ORDER BY timestamp DESC LIMIT 50;"
+  sqlite3 ${AGENT_HOME}/telegram-bot/data/bot.db "SELECT * FROM messages WHERE content LIKE '%keyword%' ORDER BY timestamp DESC LIMIT 50;"
   \`\`\`
 - Never say "I don't remember" without checking the database first
 
@@ -427,14 +765,67 @@ These are two different tools. Use the right one.
 - Taking actions on behalf of the user in a web app
 - The task cannot be done with a plain web search
 
-### How to use Patchright:
-- Patchright venv: \`${AGENT_HOME}/venv\`
-- Session files: \`~/.claude/sessions/\`
-- Always load the correct session file before navigating (gmail.json, twitter.json etc.)
-- Add random 1-3 second delays between all browser actions
-- If session expired, re-login and save new session file
-- Never hardcode credentials — always read from \`~/.claude/.env\`
-- Use Patchright, never standard Playwright — Patchright bypasses anti-bot detection
+## CRITICAL: Browser Automation Setup
+
+**NEVER use Playwright. ALWAYS use Patchright.**
+
+Patchright is a drop-in Playwright replacement that bypasses anti-bot detection. It is already installed and ready to use.
+
+### Patchright Location and Activation:
+\`\`\`bash
+# Patchright is installed here:
+${AGENT_HOME}/venv/
+
+# To use Patchright, activate the venv first:
+source ${AGENT_HOME}/venv/bin/activate
+
+# Then import in Python:
+from patchright.sync_api import sync_playwright
+# OR for async:
+from patchright.async_api import async_playwright
+\`\`\`
+
+### Patchright Usage Rules:
+- **Location**: \`${AGENT_HOME}/venv\` — activate this venv before any browser automation
+- **Session files**: \`${AGENT_HOME}/.claude/sessions/\` — load the correct session (gmail.json, twitter.json, etc.)
+- **Proxy**: If configured, ALWAYS use the proxy from \`${AGENT_HOME}/.claude/.env\` (PROXY_URL)
+- **Delays**: Add random 1-3 second delays between all browser actions
+- **Sessions**: If session expired, re-login and save new session file
+- **Credentials**: Never hardcode — always read from \`${AGENT_HOME}/.claude/.env\`
+- **IMPORTANT**: The API is identical to Playwright, just import from \`patchright\` instead of \`playwright\`
+
+### Quick Start Example (with proxy support):
+\`\`\`bash
+source ${AGENT_HOME}/venv/bin/activate
+python3 << 'PYEOF'
+from patchright.sync_api import sync_playwright
+import os
+
+# Load proxy from env
+proxy_url = os.environ.get("PROXY_URL", "")
+
+with sync_playwright() as p:
+    # Configure proxy if available
+    launch_options = {"headless": True}
+    if proxy_url:
+        launch_options["proxy"] = {"server": proxy_url}
+
+    browser = p.chromium.launch(**launch_options)
+    context = browser.new_context()
+    # Load session if needed:
+    # context = browser.new_context(storage_state="${AGENT_HOME}/.claude/sessions/gmail.json")
+    page = context.new_page()
+    page.goto("https://example.com")
+    print(page.title())
+    browser.close()
+PYEOF
+\`\`\`
+
+### Proxy Configuration:
+- Proxy URL is stored in \`${AGENT_HOME}/.claude/.env\` as \`PROXY_URL\`
+- Format: \`http://user:pass@host:port\` or \`socks5://user:pass@host:port\`
+- If PROXY_URL is empty, connect directly (no proxy)
+- Residential proxies are recommended for anti-detection (BrightData, IPRoyal, etc.)
 
 ---
 
@@ -470,7 +861,7 @@ You produce text. The script or bot delivers it. You never touch Telegram direct
 
 ## Scheduled Tasks
 
-See \`~/.claude/CRON.md\` for full details on how scheduling works, the two script types, templates, and how to create new scheduled jobs.
+See \`${AGENT_HOME}/.claude/CRON.md\` for full details on how scheduling works, the two script types, templates, and how to create new scheduled jobs.
 
 Rule: all scripts run from \`${AGENT_HOME}/agent/\` — always. Never change directory.
 
@@ -486,13 +877,13 @@ Rule: all scripts run from \`${AGENT_HOME}/agent/\` — always. Never change dir
 
 ## Skills
 
-Skills live in \`~/.claude/skills/\`. Read the relevant skill before any specialised task.
+Skills live in \`${AGENT_HOME}/.claude/skills/\`. Read the relevant skill before any specialised task.
 
 Two meta-skills are pre-installed:
 
 **find-skills** — use this when ${USER_NAME} asks for something you don't have a skill for yet.
 Search skills.sh for an existing skill before building from scratch.
-\`npx skillsadd owner/repo/skill-name\` installs it into \`~/.claude/skills/\`.
+\`npx skillsadd owner/repo/skill-name\` installs it into \`${AGENT_HOME}/.claude/skills/\`.
 
 **skill-creator** — use this when ${USER_NAME} says something like:
 - "that was perfect"
@@ -500,7 +891,7 @@ Search skills.sh for an existing skill before building from scratch.
 - "save that as a skill"
 - or when you notice a pattern worth preserving
 
-Use skill-creator to package the behaviour into a reusable skill and save it to \`~/.claude/skills/\`. Do this proactively — if you handled something exceptionally well, suggest turning it into a skill.
+Use skill-creator to package the behaviour into a reusable skill and save it to \`${AGENT_HOME}/.claude/skills/\`. Do this proactively — if you handled something exceptionally well, suggest turning it into a skill.
 
 Install new skills from the public directory: https://skills.sh
 Command: \`npx skillsadd owner/repo/skill-name\`
@@ -510,7 +901,7 @@ Command: \`npx skillsadd owner/repo/skill-name\`
 ## Security
 - Never expose credentials or session files in responses
 - Never run as root
-- Read credentials from \`~/.claude/.env\`
+- Read credentials from \`${AGENT_HOME}/.claude/.env\`
 - Confirm before any destructive action
 
 ---
@@ -529,9 +920,11 @@ log "CLAUDE.md created"
 cat > "$AGENT_HOME/.claude/CRON.md" << CRONMD
 # CRON.md — Scheduled Tasks
 
-All scheduled scripts live in \`~/.claude/scheduler/\`.
+All scheduled scripts live in \`${AGENT_HOME}/.claude/scheduler/\`.
 All scripts run from \`${AGENT_HOME}/agent/\` — always. Never change this.
-All output is logged to \`~/.claude/conversations.db\` so replies in Telegram continue the conversation seamlessly.
+All output is logged to \`${AGENT_HOME}/telegram-bot/data/bot.db\` so replies in Telegram continue the conversation seamlessly.
+
+**IMPORTANT:** Always use absolute paths in cron scripts. Never use \`~\` — it resolves to /root/ when cron runs, not /home/agent/.
 
 ---
 
@@ -552,9 +945,10 @@ Use for: fixed messages, alerts, notifications where no thinking needed.
 
 \`\`\`bash
 #!/bin/bash
-source ~/.claude/.env
+# IMPORTANT: Use absolute paths, never ~
+source ${AGENT_HOME}/.claude/.env
 AGENT_DIR="${AGENT_HOME}/agent"
-DB="${AGENT_HOME}/.claude/conversations.db"
+DB="${AGENT_HOME}/telegram-bot/data/bot.db"
 cd "\$AGENT_DIR"
 
 MSG="Your message here"
@@ -574,9 +968,10 @@ Use for: research, summaries, analysis, anything that needs thinking.
 
 \`\`\`bash
 #!/bin/bash
-source ~/.claude/.env
+# IMPORTANT: Use absolute paths, never ~
+source ${AGENT_HOME}/.claude/.env
 AGENT_DIR="${AGENT_HOME}/agent"
-DB="${AGENT_HOME}/.claude/conversations.db"
+DB="${AGENT_HOME}/telegram-bot/data/bot.db"
 LOG="/var/log/agent-cron.log"
 cd "\$AGENT_DIR"
 
@@ -599,8 +994,8 @@ sqlite3 "\$DB" "INSERT INTO messages (role, content, directory, timestamp) VALUE
 When ${USER_NAME} implies a recurring task or reminder — create it immediately without being asked.
 
 1. Type 1 or Type 2?
-2. Write script to \`~/.claude/scheduler/script_name.sh\`
-3. \`chmod +x ~/.claude/scheduler/script_name.sh\`
+2. Write script to \`${AGENT_HOME}/.claude/scheduler/script_name.sh\`
+3. \`chmod +x ${AGENT_HOME}/.claude/scheduler/script_name.sh\`
 4. Add to crontab: \`(crontab -l; echo "0 9 * * 1 ${AGENT_HOME}/.claude/scheduler/script_name.sh") | crontab -\`
 5. Tell ${USER_NAME} what was created and when it runs
 
@@ -729,6 +1124,10 @@ ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_USER_ID=${TELEGRAM_USER_ID}
 
+# Residential proxy for Patchright (anti-detection)
+# Format: http://user:pass@host:port or socks5://user:pass@host:port
+PROXY_URL=${PROXY_URL}
+
 # Fill in when ready for browser automation
 GMAIL_EMAIL=
 GMAIL_PASSWORD=
@@ -759,20 +1158,24 @@ log "Sessions folder locked to owner only"
 
 # ── Create scheduler folder ──
 mkdir -p "$AGENT_HOME/.claude/scheduler"
-log "Scheduler folder created at ~/.claude/scheduler/"
+log "Scheduler folder created at $AGENT_HOME/.claude/scheduler/"
 
 # ── Morning brief script ──
 cat > "$AGENT_HOME/.claude/scheduler/morning_brief.sh" << BRIEFSCRIPT
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────
 # MORNING BRIEF — runs at 8am daily
-# Runs from ~/agent/ so replies have full context in conversations.db
+# Runs from ${AGENT_HOME}/agent/ so replies have full context
+# IMPORTANT: Uses absolute paths, never ~
 # ─────────────────────────────────────────────────────────────
 
-source "${AGENT_HOME}/.claude/.env"
+# Define AGENT_HOME (fallback if not set by cron environment)
+AGENT_HOME="\${AGENT_HOME:-${AGENT_HOME}}"
+
+source "\${AGENT_HOME}/.claude/.env"
 LOG="/var/log/agent-cron.log"
-AGENT_DIR="${AGENT_HOME}/agent"
-DB="${AGENT_HOME}/.claude/conversations.db"
+AGENT_DIR="\${AGENT_HOME}/agent"
+DB="\${AGENT_HOME}/telegram-bot/data/bot.db"
 
 echo "[\$(date)] Starting morning brief..." >> \$LOG
 
@@ -826,12 +1229,16 @@ cat > "$AGENT_HOME/.claude/scheduler/auth_reminder.sh" << AUTHSCRIPT
 # ─────────────────────────────────────────────────────────────
 # AUTH REMINDER — runs 25th of every month at 9am
 # Simple curl — no Claude needed, just a Telegram message
+# IMPORTANT: Uses absolute paths, never ~
 # ─────────────────────────────────────────────────────────────
 
-source "${AGENT_HOME}/.claude/.env"
+# Define AGENT_HOME (fallback if not set by cron environment)
+AGENT_HOME="\${AGENT_HOME:-${AGENT_HOME}}"
+
+source "\${AGENT_HOME}/.claude/.env"
 LOG="/var/log/agent-cron.log"
-AGENT_DIR="${AGENT_HOME}/agent"
-DB="${AGENT_HOME}/.claude/conversations.db"
+AGENT_DIR="\${AGENT_HOME}/agent"
+DB="\${AGENT_HOME}/telegram-bot/data/bot.db"
 
 MSG="⚠️ Your Claude auth token expires in 5 days.
 
@@ -855,14 +1262,18 @@ log "auth_reminder.sh created in scheduler/"
 # ── Cron jobs ──
 CRON_FILE="/tmp/agent_cron"
 cat > "$CRON_FILE" << CRONEOF
-# All scheduled jobs live in: ~/.claude/scheduler/
-# All scripts run from ~/agent/ — never change directory
+# Environment variables for cron
+AGENT_HOME=${AGENT_HOME}
+PATH=/usr/local/bin:/usr/bin:/bin:${AGENT_HOME}/.local/bin
+
+# All scheduled jobs live in: ${AGENT_HOME}/.claude/scheduler/
+# All scripts run from ${AGENT_HOME}/agent/ — never change directory
 
 # MORNING BRIEF — 8:00am daily
-0 8 * * * ${AGENT_HOME}/.claude/scheduler/morning_brief.sh
+0 8 * * * ${AGENT_HOME}/.claude/scheduler/morning_brief.sh >> /var/log/agent-cron.log 2>&1
 
 # AUTH REMINDER — 25th of every month at 9am
-0 9 25 * * ${AGENT_HOME}/.claude/scheduler/auth_reminder.sh
+0 9 25 * * ${AGENT_HOME}/.claude/scheduler/auth_reminder.sh >> /var/log/agent-cron.log 2>&1
 CRONEOF
 
 if [ "$EUID" -eq 0 ]; then
@@ -872,6 +1283,11 @@ else
 fi
 rm "$CRON_FILE"
 touch /var/log/agent-cron.log
+# Make log file writable by agent user
+if [ "$EUID" -eq 0 ]; then
+  chown agent:agent /var/log/agent-cron.log
+fi
+chmod 664 /var/log/agent-cron.log
 log "Cron jobs configured (8am morning brief, monthly auth reminder)"
 
 # =============================================================================
@@ -880,8 +1296,6 @@ log "Cron jobs configured (8am morning brief, monthly auth reminder)"
 section "Step 8 of 8 — Login + Start + Test"
 
 # ── Claude Code Auth ──
-echo ""
-echo -e "${BOLD}Claude Code Login${NC}"
 echo ""
 echo -e "${BOLD}Claude Code Login${NC}"
 echo ""
@@ -909,7 +1323,13 @@ else
   echo -e "  5. When done, type ${BOLD}/exit${NC} or press ${BOLD}Ctrl+D${NC} to continue"
   echo ""
   pause "Ready to configure"
-  claude config < /dev/tty || warn "Config failed — run 'claude config' manually after setup"
+
+  # Run claude config as agent user so credentials save to /home/agent/.claude/ (not /root/)
+  if [ "$EUID" -eq 0 ]; then
+    su -c "HOME=$AGENT_HOME claude config" agent < /dev/tty || warn "Config failed — run 'su agent && claude config' manually after setup"
+  else
+    claude config < /dev/tty || warn "Config failed — run 'claude config' manually after setup"
+  fi
   log "Subscription login complete — remember to re-auth every 30 days"
 fi
 
@@ -921,6 +1341,40 @@ sleep 1
 if [ "$EUID" -eq 0 ]; then
   chown -R agent:agent "$AGENT_HOME"
   log "Ownership set to agent user"
+
+  # ── Migrate any root Claude data to agent user ──
+  # If claude was accidentally run as root, move data to agent and symlink
+  if [ -d "/root/.claude" ] && [ ! -L "/root/.claude" ]; then
+    # Copy any files that don't exist in agent's directory
+    cp -rn /root/.claude/* "$AGENT_HOME/.claude/" 2>/dev/null || true
+    chown -R agent:agent "$AGENT_HOME/.claude"
+    # Remove root's .claude and symlink to agent's
+    rm -rf /root/.claude
+    ln -s "$AGENT_HOME/.claude" /root/.claude
+    log "Migrated root Claude data to agent user"
+  fi
+
+  # Same for .config/claude
+  if [ -d "/root/.config/claude" ] && [ ! -L "/root/.config/claude" ]; then
+    mkdir -p "$AGENT_HOME/.config/claude"
+    cp -rn /root/.config/claude/* "$AGENT_HOME/.config/claude/" 2>/dev/null || true
+    chown -R agent:agent "$AGENT_HOME/.config"
+    rm -rf /root/.config/claude
+    mkdir -p /root/.config
+    ln -s "$AGENT_HOME/.config/claude" /root/.config/claude
+    log "Migrated root config to agent user"
+  fi
+
+  # Clean up any npm/cache directories accidentally created in /root
+  # (These should not exist but clean up if they do)
+  if [ -d "/root/.npm" ]; then
+    rm -rf /root/.npm
+    log "Cleaned up /root/.npm"
+  fi
+  if [ -d "/root/.cache/patchright" ]; then
+    rm -rf /root/.cache/patchright
+    log "Cleaned up /root/.cache/patchright"
+  fi
 fi
 
 # ── Start Telegram Bot ──
@@ -932,11 +1386,10 @@ cd "$TELEGRAM_DIR"
 pm2 delete telegram-bot > /dev/null 2>&1 || true
 
 if [ "$EUID" -eq 0 ]; then
-  # Run PM2 as the agent user
-  su -c "cd $TELEGRAM_DIR && pm2 start 'poetry run python src/bot.py' --name telegram-bot" agent > /dev/null 2>&1 || \
-  su -c "cd $TELEGRAM_DIR && pm2 start '$AGENT_HOME/venv/bin/python src/bot.py' --name telegram-bot" agent > /dev/null 2>&1 || \
-  su -c "cd $TELEGRAM_DIR && pm2 start 'python3 src/bot.py' --name telegram-bot" agent > /dev/null 2>&1 || \
-  warn "Could not auto-start — run manually: su agent && cd $TELEGRAM_DIR && pm2 start 'python3 src/bot.py' --name telegram-bot"
+  # Run PM2 as the agent user (use run_bot.py wrapper for startup ping)
+  su -c "cd $TELEGRAM_DIR && pm2 start '$AGENT_HOME/.local/bin/poetry run python run_bot.py' --name telegram-bot" agent > /dev/null 2>&1 || \
+  su -c "cd $TELEGRAM_DIR && pm2 start 'python3 run_bot.py' --name telegram-bot" agent > /dev/null 2>&1 || \
+  warn "Could not auto-start — run manually: su agent && cd $TELEGRAM_DIR && pm2 start 'python3 run_bot.py' --name telegram-bot"
 
   # PM2 startup on reboot as agent user
   STARTUP_CMD=$(su -c "pm2 startup systemd" agent 2>&1 | grep "sudo env" | head -1)
@@ -944,14 +1397,10 @@ if [ "$EUID" -eq 0 ]; then
     eval "$STARTUP_CMD" > /dev/null 2>&1 || true
   fi
   su -c "pm2 save" agent > /dev/null 2>&1 || true
-
-  # Crontab also needs to be set for agent user
-  crontab -u agent "$CRON_FILE" 2>/dev/null || true
 else
-  pm2 start "poetry run python src/bot.py" --name "telegram-bot" --cwd "$TELEGRAM_DIR" > /dev/null 2>&1 || \
-  pm2 start "$AGENT_HOME/venv/bin/python src/bot.py" --name "telegram-bot" --cwd "$TELEGRAM_DIR" > /dev/null 2>&1 || \
-  pm2 start "python3 src/bot.py" --name "telegram-bot" --cwd "$TELEGRAM_DIR" > /dev/null 2>&1 || \
-  warn "Could not auto-start — run manually: cd $TELEGRAM_DIR && pm2 start 'python3 src/bot.py' --name telegram-bot"
+  pm2 start "$HOME/.local/bin/poetry run python run_bot.py" --name "telegram-bot" --cwd "$TELEGRAM_DIR" > /dev/null 2>&1 || \
+  pm2 start "python3 run_bot.py" --name "telegram-bot" --cwd "$TELEGRAM_DIR" > /dev/null 2>&1 || \
+  warn "Could not auto-start — run manually: cd $TELEGRAM_DIR && pm2 start 'python3 run_bot.py' --name telegram-bot"
 
   STARTUP_CMD=$(pm2 startup systemd 2>&1 | grep "sudo env" | head -1)
   if [ -n "$STARTUP_CMD" ]; then
@@ -967,6 +1416,30 @@ if pm2 list 2>/dev/null | grep -q "telegram-bot.*online"; then
 else
   warn "Bot status unclear — check with: pm2 list"
 fi
+
+# ── Send setup complete message to Telegram ──
+sleep 2
+SETUP_MSG="✅ *Setup Complete*
+
+Hey ${USER_NAME}, I'm ${AGENT_NAME} — your personal AI assistant.
+
+I'm now running 24/7 on this VPS. Text me anything and I'll get to work.
+
+Some things I can do:
+• Answer questions and have conversations
+• Run commands and write code
+• Search the web for current info
+• Set up scheduled tasks and reminders
+• Send you a morning brief every day at 8am
+
+Try sending me a message now to make sure everything works."
+
+curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+  -d chat_id="${TELEGRAM_USER_ID}" \
+  -d text="$SETUP_MSG" \
+  -d parse_mode="Markdown" > /dev/null 2>&1 && \
+  log "Setup complete message sent to Telegram" || \
+  warn "Could not send setup message — but bot should still work"
 
 # ── Test ──
 echo ""
