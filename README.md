@@ -40,7 +40,7 @@ Text it like a person. It remembers everything. It runs tasks while you sleep.
 ## One-Command Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/aibyahmad/claude-assistant/main/install.sh | bash
+bash <(curl -sSL https://raw.githubusercontent.com/aibyahmad/claude-assistant/main/install.sh)
 ```
 
 By the end of the installer, you will text your bot **hello** and get a reply.

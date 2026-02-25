@@ -3,7 +3,7 @@
 # =============================================================================
 # ONE-CLICK INSTALL — Claude Assistant
 # =============================================================================
-# Usage: curl -sSL https://raw.githubusercontent.com/YOURNAME/YOURREPO/main/install.sh | bash
+# Usage: bash <(curl -sSL https://raw.githubusercontent.com/aibyahmad/claude-assistant/main/install.sh)
 # By the end of this script you will be texting your assistant and getting replies.
 # =============================================================================
 
