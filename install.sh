@@ -900,14 +900,16 @@ CREDFILE
   log "API key configured — no login required, never expires"
 else
   # ── Subscription ──
-  echo -e "Here is exactly what will happen:"
-  echo -e "  1. A ${BOLD}URL${NC} will appear below"
-  echo -e "  2. Open it on your phone or laptop"
-  echo -e "  3. Log in with your ${BOLD}claude.ai account${NC}"
-  echo -e "  4. You will see a ${BOLD}code${NC} — paste it back here"
+  echo -e "Claude Code config will open. Here's what to do:"
   echo ""
-  pause "Ready to log in"
-  claude auth login || warn "Auth failed — run 'claude auth login' manually after setup"
+  echo -e "  1. Select ${BOLD}Claude.ai account${NC} when prompted"
+  echo -e "  2. Copy the ${BOLD}URL${NC} it gives you"
+  echo -e "  3. Open it in your browser, log in, get the ${BOLD}code${NC}"
+  echo -e "  4. Paste the code back (it will work in this interface)"
+  echo -e "  5. When done, type ${BOLD}/exit${NC} or press ${BOLD}Ctrl+D${NC} to continue"
+  echo ""
+  pause "Ready to configure"
+  claude config < /dev/tty || warn "Config failed — run 'claude config' manually after setup"
   log "Subscription login complete — remember to re-auth every 30 days"
 fi
 
