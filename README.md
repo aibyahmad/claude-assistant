@@ -6,6 +6,8 @@
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Ubuntu-orange?style=flat-square)
 
+_Want to make your first $10k/month with AI skills like this? → [AI Income Accelerator](https://www.fixeonai.com/ai-income-accelerator)_
+
 ---
 
 ## What Is This?
@@ -38,7 +40,7 @@ Text it like a person. It remembers everything. It runs tasks while you sleep.
 ## One-Command Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YOURNAME/claude-assistant/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/aibyahmad/claude-assistant/main/install.sh | bash
 ```
 
 By the end of the installer, you will text your bot **hello** and get a reply.
@@ -82,6 +84,7 @@ Claude never touches Telegram directly. It just produces output. The bot or scri
 The installer walks you through everything interactively. No config files to edit manually.
 
 **It asks you for:**
+
 - Anthropic API key or Claude.ai subscription login
 - Telegram Bot Token (from @BotFather)
 - Your Telegram User ID (from @userinfobot)
@@ -91,12 +94,14 @@ The installer walks you through everything interactively. No config files to edi
 - Model — Sonnet 4.6, Opus 4.6, or Haiku 4.5
 
 **It installs:**
+
 - Node.js, Claude Code, PM2
 - Python, Patchright, Chromium
 - The Telegram bot (RichardAtCT/claude-code-telegram)
 - UFW firewall (SSH only)
 
 **It creates and configures:**
+
 - `CLAUDE.md` — operational rulebook
 - `SOUL.md` — assistant personality and identity
 - `USER.md` — your profile, interests, preferences
@@ -122,11 +127,11 @@ The installer walks you through everything interactively. No config files to edi
 
 ## Models
 
-| Model | Best For | API Cost |
-|-------|----------|----------|
-| **Sonnet 4.6** *(recommended)* | Daily use, coding, general tasks | $3 / $15 per M tokens |
-| **Opus 4.6** | Complex reasoning, large codebases, 1M context | $5 / $25 per M tokens |
-| **Haiku 4.5** | Fast tasks, high-volume, budget use | $1 / $5 per M tokens |
+| Model                          | Best For                                       | API Cost              |
+| ------------------------------ | ---------------------------------------------- | --------------------- |
+| **Sonnet 4.6** _(recommended)_ | Daily use, coding, general tasks               | $3 / $15 per M tokens |
+| **Opus 4.6**                   | Complex reasoning, large codebases, 1M context | $5 / $25 per M tokens |
+| **Haiku 4.5**                  | Fast tasks, high-volume, budget use            | $1 / $5 per M tokens  |
 
 You choose during setup. Change it later: `nano ~/.claude/settings.json`
 
@@ -134,9 +139,9 @@ You choose during setup. Change it later: `nano ~/.claude/settings.json`
 
 ## Permission Levels
 
-| Level | Behaviour |
-|-------|-----------|
-| **Full auto** | Claude runs everything without asking. Best for power users. |
+| Level                  | Behaviour                                                                  |
+| ---------------------- | -------------------------------------------------------------------------- |
+| **Full auto**          | Claude runs everything without asking. Best for power users.               |
 | **Telegram approvals** | Claude asks you in Telegram before running commands. Best for most people. |
 
 ---
@@ -193,13 +198,14 @@ Today is Wednesday, 25 February 2026.
 
 The assistant creates and manages scheduled jobs proactively. Just tell it what you want:
 
-> *"Remind me every Monday to check invoices"*
-> *"Prep me before my Thursday 3pm call with James"*
-> *"Check my portfolio every morning and flag anything down more than 5%"*
+> _"Remind me every Monday to check invoices"_
+> _"Prep me before my Thursday 3pm call with James"_
+> _"Check my portfolio every morning and flag anything down more than 5%"_
 
 It will write the script, drop it in `~/.claude/scheduler/`, add it to crontab, and tell you it's done. No asking. No waiting.
 
 Two types of scheduled jobs:
+
 - **Simple reminder** — fixed message, no Claude, just a curl to Telegram
 - **AI task** — Claude does the work, captures output, sends to Telegram
 
@@ -280,14 +286,20 @@ All of these are configured automatically by the installer:
 
 ## Stack
 
-| Component | Role |
-|-----------|------|
-| [Claude Code](https://claude.ai/code) | The AI brain |
-| [claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram) | Telegram interface |
-| [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright) | Browser automation (anti-detection) |
-| PM2 | Process management + auto-restart on reboot |
-| SQLite | Conversation history across sessions |
-| UFW | Firewall |
+| Component                                                                   | Role                                        |
+| --------------------------------------------------------------------------- | ------------------------------------------- |
+| [Claude Code](https://claude.ai/code)                                       | The AI brain                                |
+| [claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram) | Telegram interface                          |
+| [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)            | Browser automation (anti-detection)         |
+| PM2                                                                         | Process management + auto-restart on reboot |
+| SQLite                                                                      | Conversation history across sessions        |
+| UFW                                                                         | Firewall                                    |
+
+---
+
+## Want to monetize AI skills like this?
+
+If you can build this, you can sell it. I teach you exactly how to package AI into offers, find clients, and hit $10k/month → [AI Income Accelerator](https://www.fixeonai.com/ai-income-accelerator)
 
 ---
 
@@ -297,4 +309,4 @@ MIT — use it, fork it, build on it.
 
 ---
 
-*Built with Claude Code. Powered by Anthropic.*
+_Built with Claude Code. Powered by Anthropic._
