@@ -620,15 +620,15 @@ mkdir -p "$AGENT_HOME/.claude/sessions"
 mkdir -p "$AGENT_HOME/.claude/skills"
 mkdir -p "$AGENT_HOME/agent"
 
-# Install meta-skills from skills.sh (as agent user to avoid npm cache in /root)
-log "Installing meta-skills from skills.sh..."
+# Install meta-skills (as agent user to avoid npm cache in /root)
+log "Installing meta-skills..."
 if [ "$EUID" -eq 0 ]; then
-  su -c "cd $AGENT_HOME/.claude/skills && npx skillsadd vercel-labs/skills/find-skills --yes" agent > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skillsadd vercel-labs/skills/find-skills"
-  su -c "cd $AGENT_HOME/.claude/skills && npx skillsadd anthropics/skills/skill-creator --yes" agent > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skillsadd anthropics/skills/skill-creator"
+  su -c "cd $AGENT_HOME/.claude/skills && npx skills add https://github.com/vercel-labs/skills --skill find-skills" agent > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skills add https://github.com/vercel-labs/skills --skill find-skills"
+  su -c "cd $AGENT_HOME/.claude/skills && npx skills add https://github.com/anthropics/skills --skill skill-creator" agent > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skills add https://github.com/anthropics/skills --skill skill-creator"
 else
   cd "$AGENT_HOME/.claude/skills"
-  npx skillsadd vercel-labs/skills/find-skills --yes > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skillsadd vercel-labs/skills/find-skills"
-  npx skillsadd anthropics/skills/skill-creator --yes > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skillsadd anthropics/skills/skill-creator"
+  npx skills add https://github.com/vercel-labs/skills --skill find-skills > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skills add https://github.com/vercel-labs/skills --skill find-skills"
+  npx skills add https://github.com/anthropics/skills --skill skill-creator > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skills add https://github.com/anthropics/skills --skill skill-creator"
   cd "$AGENT_HOME"
 fi
 
@@ -1314,21 +1314,24 @@ CREDFILE
   log "API key configured — no login required, never expires"
 else
   # ── Subscription ──
-  echo -e "Claude Code config will open. Here's what to do:"
+  echo -e "Claude Code will prompt for login. Here's what to do:"
   echo ""
   echo -e "  1. Select ${BOLD}Claude.ai account${NC} when prompted"
   echo -e "  2. Copy the ${BOLD}URL${NC} it gives you"
   echo -e "  3. Open it in your browser, log in, get the ${BOLD}code${NC}"
-  echo -e "  4. Paste the code back (it will work in this interface)"
-  echo -e "  5. When done, type ${BOLD}/exit${NC} or press ${BOLD}Ctrl+D${NC} to continue"
+  echo -e "  4. Paste the code back here"
+  echo -e "  5. It will auto-complete after authentication"
   echo ""
-  pause "Ready to configure"
+  echo -e "  ${YELLOW}Note:${NC} Authentication typically takes about 60 seconds to verify."
+  echo ""
+  pause "Ready to authenticate"
 
-  # Run claude config as agent user so credentials save to /home/agent/.claude/ (not /root/)
+  # Use --print mode which triggers OAuth if needed, then auto-exits (no TUI trap)
+  # 60 second timeout as safety net
   if [ "$EUID" -eq 0 ]; then
-    su -c "HOME=$AGENT_HOME claude config" agent < /dev/tty || warn "Config failed — run 'su agent && claude config' manually after setup"
+    timeout 60 su -c "HOME=$AGENT_HOME claude --print 'Say: Authentication successful' --dangerously-skip-permissions" agent < /dev/tty 2>&1 || warn "Auth failed or timed out — run 'su agent && claude --print test' manually after setup"
   else
-    claude config < /dev/tty || warn "Config failed — run 'claude config' manually after setup"
+    timeout 60 claude --print "Say: Authentication successful" --dangerously-skip-permissions < /dev/tty 2>&1 || warn "Auth failed or timed out — run 'claude --print test' manually after setup"
   fi
   log "Subscription login complete — remember to re-auth every 30 days"
 fi
