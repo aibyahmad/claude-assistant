@@ -223,7 +223,7 @@ echo ""
 echo -e "${CYAN}─── Residential Proxies (Optional) ───${NC}"
 echo ""
 echo -e "Static residential / ISP proxies help Patchright bypass anti-bot detection."
-echo -e "You can add this later by editing ${BOLD}~/.claude/.env${NC}"
+echo -e "You can add this later by editing ${BOLD}/home/agent/.claude/.env${NC}"
 echo ""
 echo -e "  ${BOLD}1) Skip${NC} — no proxies (default)"
 echo -e "  ${BOLD}2) Add proxy${NC} — paste your proxy URL"
@@ -246,7 +246,7 @@ if [[ "$PROXY_CHOICE" == "2" ]]; then
     warn "No proxy entered — skipping"
   fi
 else
-  log "No proxy configured — add later in ~/.claude/.env"
+  log "No proxy configured — add later in /home/agent/.claude/.env"
 fi
 
 echo ""
@@ -620,17 +620,10 @@ mkdir -p "$AGENT_HOME/.claude/sessions"
 mkdir -p "$AGENT_HOME/.claude/skills"
 mkdir -p "$AGENT_HOME/agent"
 
-# Install meta-skills (as agent user to avoid npm cache in /root)
-log "Installing meta-skills..."
-if [ "$EUID" -eq 0 ]; then
-  su -c "cd $AGENT_HOME/.claude/skills && yes | npx skills add https://github.com/vercel-labs/skills --skill find-skills" agent > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skills add https://github.com/vercel-labs/skills --skill find-skills"
-  su -c "cd $AGENT_HOME/.claude/skills && yes | npx skills add https://github.com/anthropics/skills --skill skill-creator" agent > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skills add https://github.com/anthropics/skills --skill skill-creator"
-else
-  cd "$AGENT_HOME/.claude/skills"
-  yes | npx skills add https://github.com/vercel-labs/skills --skill find-skills > /dev/null 2>&1 && log "find-skills installed" || warn "find-skills install failed — install manually: npx skills add https://github.com/vercel-labs/skills --skill find-skills"
-  yes | npx skills add https://github.com/anthropics/skills --skill skill-creator > /dev/null 2>&1 && log "skill-creator installed" || warn "skill-creator install failed — install manually: npx skills add https://github.com/anthropics/skills --skill skill-creator"
-  cd "$AGENT_HOME"
-fi
+# Meta-skills are optional - install manually later if needed:
+# npx skills add https://github.com/vercel-labs/skills --skill find-skills
+# npx skills add https://github.com/anthropics/skills --skill skill-creator
+log "Skills folder created (install skills manually later if needed)"
 
 # Claude Code global settings — based on permission level chosen during onboarding
 mkdir -p "$AGENT_HOME/.claude"
@@ -1104,6 +1097,12 @@ cat > "$AGENT_HOME/.claude/MEMORY.md" << 'MEMORYMD'
 
 > Updated automatically. Do not wipe manually.
 > Distill, don't dump. Only what matters long term.
+
+## Setup Tasks (Do these on first conversation)
+
+- [ ] Install find-skills: `npx skills add https://github.com/vercel-labs/skills --skill find-skills`
+- [ ] Install skill-creator: `npx skills add https://github.com/anthropics/skills --skill skill-creator`
+- [ ] Mark these done after installing
 
 ## About the User
 
