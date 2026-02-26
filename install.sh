@@ -202,7 +202,7 @@ log "Model: $MODEL_NAME"
 echo ""
 echo -e "${CYAN}─── Residential Proxies (Optional) ───${NC}"
 echo ""
-echo -e "Static residential / ISP proxies help Patchright bypass anti-bot detection."
+echo -e "Static residential / ISP proxies help Camoufox bypass anti-bot detection."
 echo -e "You can add this later by editing ${BOLD}/home/agent/.claude/.env${NC}"
 echo ""
 echo -e "  ${BOLD}1) Skip${NC} — no proxies (default)"
@@ -287,27 +287,27 @@ fi
 log "PM2 installed"
 
 # =============================================================================
-# STEP 4 — PYTHON + PATCHRIGHT
+# STEP 4 — PYTHON + CAMOUFOX
 # =============================================================================
-section "Step 4 of 8 — Patchright (browser automation)"
+section "Step 4 of 8 — Camoufox (browser automation)"
 
-# Install Firefox dependencies (required for Patchright)
+# Install Firefox dependencies (required for Camoufox)
 apt-get install -y -qq libgtk-3-0t64 libpangocairo-1.0-0 libcairo-gobject2 libgdk-pixbuf-2.0-0 libatk1.0-0 2>/dev/null || \
 apt-get install -y -qq libgtk-3-0 libpangocairo-1.0-0 libcairo-gobject2 libgdk-pixbuf2.0-0 libatk1.0-0 2>/dev/null || true
 log "Firefox dependencies installed"
 
-# Create venv and install Patchright as agent user (not root)
+# Create venv and install Camoufox as agent user (not root)
 if [ "$EUID" -eq 0 ]; then
   su -c "python3 -m venv $AGENT_HOME/venv" agent
-  su -c "source $AGENT_HOME/venv/bin/activate && pip install -q patchright && python -m patchright install firefox" agent
+  su -c "source $AGENT_HOME/venv/bin/activate && pip install -q 'camoufox[geoip]' && camoufox fetch" agent
 else
   python3 -m venv "$AGENT_HOME/venv"
   source "$AGENT_HOME/venv/bin/activate"
-  pip install -q patchright
-  python -m patchright install firefox
+  pip install -q 'camoufox[geoip]'
+  camoufox fetch
   deactivate
 fi
-log "Patchright + Firefox installed"
+log "Camoufox installed"
 
 # =============================================================================
 # STEP 5 — TELEGRAM BOT
@@ -833,7 +833,7 @@ ${AGENT_HOME}/
 │   └── images/         ← User images from Telegram
 ├── telegram-bot/       ← Bot code (do not modify unless asked)
 │   └── data/bot.db     ← Conversation history
-├── venv/               ← Python venv with Patchright
+├── venv/               ← Python venv with Camoufox
 └── .claude/            ← Config files
     ├── SOUL.md, USER.md, MEMORY.md, CRON.md
     ├── .env            ← Credentials
@@ -859,7 +859,7 @@ ${AGENT_HOME}/
 - Anything that does not require logging in
 - Quick lookups that don't need interaction
 
-### Use Patchright (browser automation) when:
+### Use Camoufox (browser automation) when:
 - You need to be logged in — Gmail, Twitter, YouTube, LinkedIn, any account
 - Filling in forms, clicking buttons, submitting things
 - Taking actions on behalf of the user in a web app
@@ -868,19 +868,21 @@ ${AGENT_HOME}/
 
 ---
 
-## PATCHRIGHT BROWSER AUTOMATION — COMPLETE GUIDE
+## CAMOUFOX BROWSER AUTOMATION — COMPLETE GUIDE
 
-**NEVER use Playwright. ALWAYS use Patchright.**
+**ALWAYS use Camoufox for browser automation.**
+
+Camoufox is a stealth Firefox fork with C++ level fingerprint spoofing. It bypasses bot detection on Google, YouTube, Gmail, and other sites that block normal automation.
 
 ### Two Python Environments:
 1. **Poetry venv** — for telegram-bot (don't touch)
-2. **${AGENT_HOME}/venv** — for Patchright browser automation (USE THIS)
+2. **${AGENT_HOME}/venv** — for Camoufox browser automation (USE THIS)
 
 ### Session Files Location:
 \`${AGENT_HOME}/.claude/sessions/\` — store cookies here as JSON files
-- gmail.json, twitter.json, youtube.json, linkedin.json, etc.
+- gmail.json, twitter.json, youtube.json, linkedin.json, google.json, etc.
 
-### Basic Patchright Script Template:
+### Basic Camoufox Script Template:
 
 \`\`\`python
 #!/usr/bin/env python3
@@ -890,16 +892,16 @@ import time
 import random
 from pathlib import Path
 
-# MUST use the Patchright venv
+# MUST use the Camoufox venv
 # Run with: ${AGENT_HOME}/venv/bin/python3 script.py
 
-from patchright.sync_api import sync_playwright
+from camoufox.sync_api import Camoufox
 
 # Paths
 SESSIONS_DIR = Path("${AGENT_HOME}/.claude/sessions")
 ENV_FILE = Path("${AGENT_HOME}/.claude/.env")
 
-# Load proxy from .env (returns dict with server/username/password)
+# Load proxy from .env
 def get_proxy():
     if not ENV_FILE.exists():
         return None
@@ -910,7 +912,7 @@ def get_proxy():
             key, val = line.split("=", 1)
             env_vars[key.strip()] = val.strip()
 
-    if "PROXY_SERVER" in env_vars:
+    if env_vars.get("PROXY_SERVER"):
         return {
             "server": env_vars.get("PROXY_SERVER"),
             "username": env_vars.get("PROXY_USER", ""),
@@ -941,17 +943,12 @@ def save_session(context, site_name):
 def run_browser_task():
     proxy = get_proxy()
 
-    with sync_playwright() as p:
-        # Launch Firefox (more reliable than Chromium)
-        launch_args = {"headless": True}
-        if proxy:
-            launch_args["proxy"] = proxy  # Already a dict with server/username/password
-
-        browser = p.firefox.launch(**launch_args)
+    # Camoufox with geoip=True aligns browser locale with proxy location
+    with Camoufox(proxy=proxy, geoip=True, headless=True) as browser:
         context = browser.new_context()
 
         # Load existing session
-        load_session(context, "youtube")  # or gmail, twitter, etc.
+        load_session(context, "youtube")  # or gmail, google, twitter, etc.
 
         page = context.new_page()
 
@@ -964,13 +961,11 @@ def run_browser_task():
         # Save session if logged in
         save_session(context, "youtube")
 
-        browser.close()
-
 if __name__ == "__main__":
     run_browser_task()
 \`\`\`
 
-### Running Patchright Scripts:
+### Running Camoufox Scripts:
 
 Always use the full path to the venv Python:
 \`\`\`bash
@@ -992,11 +987,17 @@ When logging into a new site for the first time:
 5. Call \`save_session(context, "sitename")\` to save cookies
 6. Future runs will auto-login using saved cookies
 
+### Key Camoufox Features:
+- **geoip=True** — aligns browser timezone/locale with proxy location (use with proxies)
+- **C++ level fingerprint spoofing** — not JS patches like other tools
+- **BrowserForge fingerprint rotation** — realistic browser fingerprints
+- **Playwright-compatible API** — same methods as Playwright/Patchright
+
 ### Important Rules:
 - Always add \`human_delay()\` between actions (1-3 seconds)
 - Always try to \`load_session()\` before navigating
 - Always \`save_session()\` after successful login
-- Use proxy if PROXY_SERVER is set in .env
+- Use proxy with geoip=True for best anti-detection
 - Handle errors gracefully — sites change, sessions expire
 - If session expired, you may need to re-login manually
 
@@ -1259,7 +1260,7 @@ ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_USER_ID=${TELEGRAM_USER_ID}
 
-# Residential proxy for Patchright (anti-detection)
+# Residential proxy for Camoufox (anti-detection)
 # Split format for proper authentication
 PROXY_SERVER=${PROXY_SERVER}
 PROXY_USER=${PROXY_USER}

@@ -10,7 +10,7 @@ Personal AI assistant running 24/7 on a VPS, accessible via Telegram.
 
 | Decision | Why |
 |----------|-----|
-| **Firefox over Chromium** | More reliable for anti-detection with Patchright |
+| **Camoufox over Patchright** | C++ level fingerprint spoofing bypasses Google/YouTube bot detection |
 | **Split proxy format** | PROXY_SERVER/USER/PASS instead of single URL for proper auth |
 | **force_new=True** | Each message starts fresh Claude session, history injected via hooks |
 | **Never cd** | Always use absolute paths from /home/agent/agent/ |
@@ -44,7 +44,7 @@ Personal AI assistant running 24/7 on a VPS, accessible via Telegram.
 │             (runs from /home/agent/agent/)              │
 │  • Reads identity files before every response           │
 │  • Has web search, bash, file access                    │
-│  • Uses Patchright for browser automation               │
+│  • Uses Camoufox for browser automation                 │
 │  • Updates MEMORY.md with important info                │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -87,7 +87,7 @@ Personal AI assistant running 24/7 on a VPS, accessible via Telegram.
 │               ├── image_handler.py
 │               └── voice_handler.py
 │
-└── venv/               ← Python venv with Patchright
+└── venv/               ← Python venv with Camoufox
 ```
 
 ---
@@ -101,7 +101,7 @@ Personal AI assistant running 24/7 on a VPS, accessible via Telegram.
 | **Images**               | User sends image → Bot saves to /agent/images/ → Claude reads with Read tool        |
 | **Restart notification** | Bot sends "🟢 Online" message on startup, logs to bot.db                            |
 | **Conversation history** | All messages saved to bot.db, Claude queries it for context                         |
-| **Browser automation**   | Patchright + Firefox with proxy support, session persistence                        |
+| **Browser automation**   | Camoufox (stealth Firefox) with proxy support, geoip, session persistence           |
 | **Scheduled tasks**      | Cron runs scripts → Scripts call Claude or send direct messages → Log to bot.db     |
 | **Memory**               | Claude updates MEMORY.md with important info automatically                          |
 
@@ -175,7 +175,7 @@ Use case: "Update Claude Code then check what version" - Claude can update, rest
 | **Firewall (UFW)**     | Blocks all incoming traffic except SSH (port 22)          |
 | **User isolation**     | Everything runs as `agent` user, never root               |
 | **Telegram whitelist** | Only your Telegram user ID can talk to the bot            |
-| **Proxy support**      | Residential proxies for Patchright to avoid bot detection |
+| **Proxy support**      | Residential proxies for Camoufox with geoip alignment      |
 
 ### Protected Files (chmod 600/700 = only owner can read)
 
@@ -196,17 +196,20 @@ Use case: "Update Claude Code then check what version" - Claude can update, rest
 
 ---
 
-## Browser Automation (Patchright)
+## Browser Automation (Camoufox)
 
-**Why Patchright over Playwright?** Patchright is a Playwright fork with built-in anti-detection. Same API, just bypasses bot detection.
+**Why Camoufox?** Camoufox is a stealth Firefox fork with C++ level fingerprint spoofing. Unlike Patchright (JS patches), Camoufox bypasses bot detection on Google, YouTube, Gmail, and other strict sites.
 
-**Why Firefox over Chromium?** Firefox is more reliable for anti-detection and has fewer fingerprinting vectors.
+**Key features:**
+- **geoip=True** — aligns browser timezone/locale with proxy location
+- **BrowserForge** — realistic fingerprint rotation
+- **Playwright-compatible API** — same methods as Playwright/Patchright
 
 ### Setup
 
 ```
-/home/agent/venv/           ← Patchright venv (separate from bot's Poetry venv)
-/home/agent/.claude/sessions/ ← Saved cookies (gmail.json, twitter.json, etc.)
+/home/agent/venv/             ← Camoufox venv (separate from bot's Poetry venv)
+/home/agent/.claude/sessions/ ← Saved cookies (gmail.json, twitter.json, google.json, etc.)
 /home/agent/.claude/.env      ← Proxy credentials (PROXY_SERVER, PROXY_USER, PROXY_PASS)
 ```
 
@@ -222,7 +225,7 @@ PROXY_PASS=your-password
 ### Running Scripts
 
 ```bash
-# Always use the Patchright venv
+# Always use the Camoufox venv
 /home/agent/venv/bin/python3 /home/agent/agent/my-script.py
 ```
 

@@ -32,8 +32,8 @@ Text it like a person. It remembers everything. It runs tasks while you sleep.
 - **Morning brief** — personalised daily news based on your interests and location, sent at 8am
 - **Proactive scheduling** — mention a recurring task or reminder once, it creates the script and schedules it automatically
 - **Web search** — searches the web when it needs current information, knows when to use it vs browser automation
-- **Browser automation** — logs into Gmail, Twitter, LinkedIn, and more on your behalf via Patchright (anti-detection)
-- **Residential proxies** — optional static residential/ISP proxy support for Patchright to bypass anti-bot detection
+- **Browser automation** — logs into Gmail, Twitter, LinkedIn, Google, YouTube and more via Camoufox (stealth Firefox with C++ fingerprint spoofing)
+- **Residential proxies** — optional static residential/ISP proxy support for Camoufox with geoip alignment
 - **Skills system** — install from [skills.sh](https://skills.sh) with one command, or write your own. The assistant applies relevant skills automatically.
 - **File uploads** — send files via Telegram, Claude reads and works with them directly
 - **Git integration** — built in, can manage repos from Telegram
@@ -103,7 +103,7 @@ The installer walks you through everything interactively. No config files to edi
 **It installs:**
 
 - Node.js, Claude Code, PM2
-- Python, Patchright, Firefox (more reliable for anti-detection)
+- Python, Camoufox (stealth Firefox with C++ fingerprint spoofing)
 - faster-whisper (local voice transcription)
 - The Telegram bot (RichardAtCT/claude-code-telegram)
 - UFW firewall (SSH only)
@@ -174,7 +174,7 @@ You choose during setup. Change it later: `nano ~/.claude/settings.json`
 ~/agent/             ← working directory — everything runs from here
 ~/telegram-bot/      ← Telegram bot code
   /data/bot.db       ← conversation history
-~/venv/              ← Python venv (Patchright + Firefox)
+~/venv/              ← Python venv (Camoufox)
 ```
 
 ---
@@ -295,7 +295,7 @@ All of these are configured automatically by the installer:
 
 ## Residential Proxies (Optional)
 
-Static residential or ISP proxies help Patchright bypass anti-bot detection when logging into services like Gmail, Twitter, and LinkedIn.
+Static residential or ISP proxies help Camoufox bypass anti-bot detection when logging into Google, YouTube, Gmail, Twitter, and LinkedIn. Camoufox's geoip feature aligns browser locale with your proxy location.
 
 **Recommended:** Static residential or static ISP proxies (not rotating residential).
 
@@ -317,7 +317,7 @@ PROXY_PASS=your-password
 | --------------------------------------------------------------------------- | ------------------------------------------- |
 | [Claude Code](https://claude.ai/code)                                       | The AI brain                                |
 | [claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram) | Telegram interface                          |
-| [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)            | Browser automation (anti-detection)         |
+| [Camoufox](https://github.com/daijro/camoufox)                              | Browser automation (stealth Firefox)        |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper)                 | Local voice transcription                   |
 | PM2                                                                         | Process management + auto-restart on reboot |
 | SQLite                                                                      | Conversation history across sessions        |
