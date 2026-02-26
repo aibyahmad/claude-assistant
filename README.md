@@ -81,7 +81,7 @@ Script sends directly to your Telegram via curl
 Your reply continues the conversation normally
 ```
 
-Claude never touches Telegram directly. It just produces output. The bot or script handles delivery. All scheduled messages are logged to `conversations.db` so when you reply, Claude has full context.
+Claude never touches Telegram directly. It just produces output. The bot or script handles delivery. All scheduled messages are logged to `bot.db` so when you reply, Claude has full context.
 
 ---
 
@@ -94,16 +94,16 @@ The installer walks you through everything interactively. No config files to edi
 - Anthropic API key or Claude.ai subscription login
 - Telegram Bot Token (from @BotFather)
 - Your Telegram User ID (from @userinfobot)
-- Your assistant's name, your name, timezone, location
-- Your interests (used for the morning brief)
-- Residential proxy URL (optional, for browser automation)
+- Residential proxy details (optional, for browser automation)
 - Permission level — full auto or Telegram approvals
 - Model — Sonnet 4.6, Opus 4.6, or Haiku 4.5
+
+**Personalization happens on first conversation** — the assistant asks your name, timezone, location, and interests, then sets up your morning brief automatically.
 
 **It installs:**
 
 - Node.js, Claude Code, PM2
-- Python, Patchright, Chromium
+- Python, Patchright, Firefox (more reliable for anti-detection)
 - faster-whisper (local voice transcription)
 - The Telegram bot (RichardAtCT/claude-code-telegram)
 - UFW firewall (SSH only)
@@ -115,8 +115,7 @@ The installer walks you through everything interactively. No config files to edi
 - `USER.md` — your profile, interests, preferences
 - `MEMORY.md` — long-term memory, auto-updated
 - `CRON.md` — scheduler rules and script templates
-- `settings.json` — model and permission config
-- `hooks.json` — Claude Code hooks that inject identity + conversation history
+- `settings.json` — model, permissions, and hooks that inject identity + conversation history
 - `~/.claude/scheduler/` — all scheduled scripts live here
 - Cron jobs wired to the scheduler scripts
 - PM2 auto-restart on reboot with startup ping
@@ -159,23 +158,23 @@ You choose during setup. Change it later: `nano ~/.claude/settings.json`
 
 ```
 ~/.claude/
-  CLAUDE.md          ← operational rulebook
+  CLAUDE.md          ← operational rulebook (autonomous behavior, communication style)
   SOUL.md            ← personality and identity
   USER.md            ← your profile, interests, preferences
   MEMORY.md          ← long-term memory, auto-updated
   CRON.md            ← scheduler rules and script templates
-  settings.json      ← model + permission config
-  hooks.json         ← Claude Code hooks for context injection
+  settings.json      ← model, permissions, hooks for context injection
   .env               ← credentials (chmod 600)
   /sessions/         ← saved browser sessions (Gmail, Twitter, etc.)
   /skills/           ← specialised skill files
   /scheduler/
-    morning_brief.sh ← 8am daily news brief
+    morning_brief.sh ← 8am daily news brief (created after personalization)
     auth_reminder.sh ← 25th monthly auth expiry reminder
 
 ~/agent/             ← working directory — everything runs from here
 ~/telegram-bot/      ← Telegram bot code
-~/venv/              ← Python venv (Patchright, faster-whisper)
+  /data/bot.db       ← conversation history
+~/venv/              ← Python venv (Patchright + Firefox)
 ```
 
 ---
@@ -219,7 +218,7 @@ Two types of scheduled jobs:
 - **Simple reminder** — fixed message, no Claude, just a curl to Telegram
 - **AI task** — Claude does the work, captures output, sends to Telegram
 
-All scripts run from `~/agent/` and log to `conversations.db` so replies continue the conversation normally.
+All scripts run from `~/agent/` and log to `bot.db` so replies continue the conversation normally.
 
 ---
 
@@ -300,10 +299,12 @@ Static residential or ISP proxies help Patchright bypass anti-bot detection when
 
 **Recommended:** Static residential or static ISP proxies (not rotating residential).
 
-The installer asks for your proxy URL during setup. Skip if you don't have one — add it later by editing `~/.claude/.env`:
+The installer asks for your proxy details during setup. Skip if you don't have one — add it later by editing `~/.claude/.env`:
 
 ```bash
-PROXY_URL=http://username:password@host:port
+PROXY_SERVER=http://isp.provider.com:10001
+PROXY_USER=your-username
+PROXY_PASS=your-password
 ```
 
 **Providers:** Smartproxy, Bright Data, IPRoyal, Oxylabs

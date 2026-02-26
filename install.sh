@@ -206,24 +206,29 @@ echo -e "Static residential / ISP proxies help Patchright bypass anti-bot detect
 echo -e "You can add this later by editing ${BOLD}/home/agent/.claude/.env${NC}"
 echo ""
 echo -e "  ${BOLD}1) Skip${NC} — no proxies (default)"
-echo -e "  ${BOLD}2) Add proxy${NC} — paste your proxy URL"
+echo -e "  ${BOLD}2) Add proxy${NC} — enter proxy details"
 echo ""
 ask "Enter 1 or 2 (default: 1):"
 read -r PROXY_CHOICE
 PROXY_CHOICE="${PROXY_CHOICE:-1}"
 
-PROXY_URL=""
+PROXY_SERVER=""
+PROXY_USER=""
+PROXY_PASS=""
 if [[ "$PROXY_CHOICE" == "2" ]]; then
   echo ""
-  echo -e "Paste your proxy URL from your provider dashboard."
-  echo -e "Format: ${BOLD}http://username:password@host:port${NC}"
+  echo -e "Enter your proxy details (from your provider dashboard)."
   echo ""
-  ask "Proxy URL:"
-  read -r PROXY_URL
-  if [[ -n "$PROXY_URL" ]]; then
+  ask "Proxy server (e.g., http://isp.provider.com:10001):"
+  read -r PROXY_SERVER
+  ask "Proxy username:"
+  read -r PROXY_USER
+  ask "Proxy password:"
+  read -r PROXY_PASS
+  if [[ -n "$PROXY_SERVER" ]]; then
     log "Proxy configured"
   else
-    warn "No proxy entered — skipping"
+    warn "No proxy server entered — skipping"
   fi
 else
   log "No proxy configured — add later in /home/agent/.claude/.env"
@@ -286,18 +291,23 @@ log "PM2 installed"
 # =============================================================================
 section "Step 4 of 8 — Patchright (browser automation)"
 
+# Install Firefox dependencies (required for Patchright)
+apt-get install -y -qq libgtk-3-0t64 libpangocairo-1.0-0 libcairo-gobject2 libgdk-pixbuf-2.0-0 libatk1.0-0 2>/dev/null || \
+apt-get install -y -qq libgtk-3-0 libpangocairo-1.0-0 libcairo-gobject2 libgdk-pixbuf2.0-0 libatk1.0-0 2>/dev/null || true
+log "Firefox dependencies installed"
+
 # Create venv and install Patchright as agent user (not root)
 if [ "$EUID" -eq 0 ]; then
   su -c "python3 -m venv $AGENT_HOME/venv" agent
-  su -c "source $AGENT_HOME/venv/bin/activate && pip install -q patchright && python -m patchright install chromium" agent
+  su -c "source $AGENT_HOME/venv/bin/activate && pip install -q patchright && python -m patchright install firefox" agent
 else
   python3 -m venv "$AGENT_HOME/venv"
   source "$AGENT_HOME/venv/bin/activate"
   pip install -q patchright
-  python -m patchright install chromium
+  python -m patchright install firefox
   deactivate
 fi
-log "Patchright + Chromium installed"
+log "Patchright + Firefox installed"
 
 # =============================================================================
 # STEP 5 — TELEGRAM BOT
@@ -389,16 +399,20 @@ from datetime import datetime
 
 def send_telegram_message(msg):
     """Send a message to Telegram"""
-    import requests
+    import urllib.request
+    import urllib.parse
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     user_id = os.environ.get("ALLOWED_USERS", "").split(",")[0].strip()
     if not token or not user_id:
         return
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": user_id, "text": msg, "parse_mode": "Markdown"}
-        )
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        data = urllib.parse.urlencode({
+            "chat_id": user_id,
+            "text": msg,
+            "parse_mode": "Markdown"
+        }).encode()
+        urllib.request.urlopen(url, data, timeout=10)
     except Exception:
         pass
 
@@ -430,80 +444,56 @@ def send_startup_ping():
         pass
 
 def check_pending_continuation():
-    """Check if there was a pending task before restart and continue it"""
+    """Check if there was a pending task saved before restart and continue it"""
     agent_home = os.environ.get("AGENT_HOME", os.path.expanduser("~"))
+    pending_file = os.path.join(agent_home, ".claude", "pending_task.md")
     db_path = os.path.join(agent_home, "telegram-bot", "data", "bot.db")
+    agent_dir = os.path.join(agent_home, "agent")
 
-    if not os.path.exists(db_path):
+    # Check for pending_task.md file
+    if not os.path.exists(pending_file):
         return
 
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
+        with open(pending_file, "r") as f:
+            pending_task = f.read().strip()
 
-        # Get last 5 messages to check for restart context
-        cursor.execute("""
-            SELECT role, content, timestamp
-            FROM messages
-            ORDER BY timestamp DESC
-            LIMIT 5
-        """)
-        messages = cursor.fetchall()
-        conn.close()
-
-        if not messages:
+        if not pending_task:
+            os.remove(pending_file)
             return
 
-        # Check if assistant's last message mentioned restarting
-        restart_keywords = ['restart', 'reboot', 'updating', 'upgrade']
-        found_restart_context = False
-        pending_instruction = None
+        # Delete the file first to prevent infinite loops
+        os.remove(pending_file)
 
-        for role, content, ts in messages:
-            content_lower = content.lower() if content else ""
-            if any(kw in content_lower for kw in restart_keywords):
-                found_restart_context = True
-            # Check if user gave instructions that include post-restart tasks
-            if role == 'user' and found_restart_context:
-                # User message that triggered the restart - might have follow-up instructions
-                if 'then' in content_lower or 'after' in content_lower:
-                    pending_instruction = content
-                    break
+        # Continue the task
+        prompt = f"""You just restarted successfully. Before the restart, you saved this pending task:
 
-        if found_restart_context and pending_instruction:
-            # There was a restart and user had follow-up instructions
-            # Call Claude to continue the task
-            agent_dir = os.path.join(agent_home, "agent")
-            prompt = f"""You just restarted successfully. Before the restart, the user asked:
+{pending_task}
 
-"{pending_instruction}"
+The restart is complete. Now continue with this task."""
 
-The restart is complete. Now continue with any remaining tasks from that instruction. If the instruction was just to restart, confirm it's done. If there were follow-up tasks (like "then tell me X"), do them now."""
-
-            try:
-                result = subprocess.run(
-                    ["claude", "--print", prompt, "--dangerously-skip-permissions"],
-                    cwd=agent_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=120
-                )
-                if result.stdout.strip():
-                    send_telegram_message(result.stdout.strip())
-                    # Log to database
-                    conn = sqlite3.connect(db_path)
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        INSERT INTO messages (role, content, timestamp)
-                        VALUES ('assistant', ?, datetime('now'))
-                    """, (result.stdout.strip(),))
-                    conn.commit()
-                    conn.close()
-            except Exception as e:
-                print(f"Continuation failed: {e}")
+        result = subprocess.run(
+            ["claude", "--print", prompt, "--dangerously-skip-permissions"],
+            cwd=agent_dir,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        if result.stdout.strip():
+            send_telegram_message(result.stdout.strip())
+            # Log to database
+            if os.path.exists(db_path):
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO messages (role, content, directory, timestamp)
+                    VALUES ('assistant', ?, ?, datetime('now'))
+                """, (result.stdout.strip(), agent_dir))
+                conn.commit()
+                conn.close()
 
     except Exception as e:
-        print(f"Pending check failed: {e}")
+        print(f"Pending task continuation failed: {e}")
 STARTUPPY
 log "Startup hook with conversation continuation created"
 
@@ -533,15 +523,22 @@ except Exception as e:
 
 # Now run the actual bot
 if __name__ == "__main__":
-    # Import and run the main module
+    import asyncio
+    import inspect
     from src import main
-    if hasattr(main, 'main'):
-        main.main()
-    elif hasattr(main, 'run'):
-        main.run()
-    else:
-        # If main.py runs on import, it's already running
-        pass
+
+    # Get the main function
+    main_func = getattr(main, 'main', None) or getattr(main, 'run', None)
+
+    if main_func:
+        # Check if it's async and run appropriately
+        if inspect.iscoroutinefunction(main_func):
+            asyncio.run(main_func())
+        else:
+            result = main_func()
+            # In case it returns a coroutine
+            if inspect.iscoroutine(result):
+                asyncio.run(result)
 RUNBOTPY
 chmod +x "$TELEGRAM_DIR/run_bot.py"
 log "Bot wrapper with startup ping and continuation created"
@@ -701,210 +698,343 @@ cat > "$AGENT_HOME/.claude/CLAUDE.md" << CLAUDEMD
 # CLAUDE.md — Operational Rulebook
 
 ## Startup Sequence
-On every single session, no matter what, read these files first in this order:
-1. \`${AGENT_HOME}/.claude/SOUL.md\` — who you are
-2. \`${AGENT_HOME}/.claude/USER.md\` — who the user is
-3. \`${AGENT_HOME}/.claude/MEMORY.md\` — what you remember
-4. \`${AGENT_HOME}/.claude/CRON.md\` — scheduled tasks and how to create new ones
+On every session, read these files first:
+1. ${AGENT_HOME}/.claude/SOUL.md — who you are
+2. ${AGENT_HOME}/.claude/USER.md — who the user is
+3. ${AGENT_HOME}/.claude/MEMORY.md — what you remember
+4. ${AGENT_HOME}/.claude/CRON.md — scheduled tasks
 
-Do not respond to anything until you have read all four.
+Do not respond until you have read all four.
+
+---
+
+## AUTONOMOUS BEHAVIOR — CRITICAL
+
+**You are fully autonomous. Do not ask for confirmation.**
+
+When given a task:
+- Execute it completely from start to finish
+- Do not pause to ask "should I proceed?" or "is this okay?"
+- Do not ask clarifying questions unless absolutely necessary
+- Make reasonable decisions and just do the work
+- Only report back when the task is DONE
+
+**Never say things like:**
+- "Would you like me to..."
+- "Should I continue with..."
+- "Let me know if you want me to..."
+- "Do you want me to proceed?"
+
+**Instead:**
+- Just do it
+- Report results when complete
+- If something fails, try alternative approaches before asking
+
+---
+
+## COMMUNICATION STYLE — MANDATORY
+
+**YOUR FINAL MESSAGE MUST BE A CLEAN SUMMARY. NOT A DUMP.**
+
+This is NON-NEGOTIABLE. Your final response to the user must be:
+- Short (1-3 sentences max)
+- Human-readable (no code, no paths, no technical terms)
+- A summary of WHAT was accomplished, not HOW
+
+**BAD FINAL RESPONSES (NEVER DO THIS):**
+- "I've set up a cron job at 00:20 that will execute a bash script..."
+- "The proxy failed so I tried without it and queried the API..."
+- "I created /home/agent/agent/file.txt with chmod 644..."
+- Dumping your thought process
+- Explaining what tools you used
+- Mentioning file paths, databases, or commands
+
+**GOOD FINAL RESPONSES (DO THIS):**
+- "Done. I'll message you at 00:20."
+- "Found your videos - here are the top 5."
+- "Saved."
+- "All set."
+- "Here's what I found: [clean list]"
+
+**RULES:**
+1. NO technical terms in final response (cron, curl, sqlite, bash, proxy, etc)
+2. NO file paths
+3. NO "I executed/created/configured/queried..."
+4. NO explaining your process
+5. Just state the RESULT
+
+---
+
+## ADAPTIVE PROBLEM SOLVING — CRITICAL
+
+**When something fails, be smart about it.**
+
+1. **Try alternatives automatically:**
+   - Proxy not working? Try without proxy first
+   - One method fails? Try another approach
+   - API blocked? Try scraping
+   - Scraping blocked? Try a different library
+
+2. **Diagnose and ask for help if needed:**
+   - If all alternatives fail, tell the user WHY it failed
+   - Suggest what they can do (e.g., "Your proxy might be expired. Can you get a new one?")
+   - If they provide new info (new proxy, new credentials), save it to the VPS and retry
+
+3. **Save user-provided config:**
+   - User gives you a new proxy? Save it to ${AGENT_HOME}/.claude/.env
+   - User gives new credentials? Save them securely
+   - Then retry the task with the new config
+
+4. **Never give up after one failure:**
+   - Try at least 2-3 different approaches before asking for help
+   - Be resourceful and creative
 
 ---
 
 ## Identity
 You are ${AGENT_NAME}. A personal AI assistant built specifically for ${USER_NAME}.
-You are not Claude. You are not a generic assistant. You are ${AGENT_NAME}.
 Embody the identity in SOUL.md fully at all times.
 
 ---
 
 ## Memory
-- Long term memory lives in \`${AGENT_HOME}/.claude/MEMORY.md\`
+- Long term memory lives in ${AGENT_HOME}/.claude/MEMORY.md
 - Update MEMORY.md whenever something important is said, decided, or learned
 - Do not wait to be asked — if something matters, write it immediately
-- Keep MEMORY.md clean and organised. Distill, don't dump.
+- Keep MEMORY.md clean and organised. Distill, do not dump.
 
 ---
 
-## Conversation History
-- All conversations are saved in \`${AGENT_HOME}/telegram-bot/data/bot.db\`
-- The Telegram bot maintains this database
-- Query for past context:
-  \`\`\`
-  sqlite3 ${AGENT_HOME}/telegram-bot/data/bot.db "SELECT * FROM messages ORDER BY timestamp DESC LIMIT 50;"
-  \`\`\`
-- Query by content:
-  \`\`\`
-  sqlite3 ${AGENT_HOME}/telegram-bot/data/bot.db "SELECT * FROM messages WHERE content LIKE '%keyword%' ORDER BY timestamp DESC LIMIT 50;"
-  \`\`\`
-- Never say "I don't remember" without checking the database first
+## Conversation History & Context
+
+All conversations are saved in ${AGENT_HOME}/telegram-bot/data/bot.db.
+
+**How to get context:**
+\`\`\`bash
+# Recent messages (last 50)
+sqlite3 ${AGENT_HOME}/telegram-bot/data/bot.db "SELECT datetime(timestamp,'localtime'), role, content FROM messages ORDER BY timestamp DESC LIMIT 50;"
+
+# Search for specific topic
+sqlite3 ${AGENT_HOME}/telegram-bot/data/bot.db "SELECT datetime(timestamp,'localtime'), role, content FROM messages WHERE content LIKE '%keyword%' ORDER BY timestamp DESC LIMIT 20;"
+\`\`\`
+
+**Rules:**
+- Check the database before saying "I don't remember"
+- Use recent conversation history to understand context
+- Reference past conversations when relevant
+
+---
+
+## Directory Structure
+
+\`\`\`
+${AGENT_HOME}/
+├── agent/              ← WORKING DIRECTORY (all tasks run here)
+│   └── images/         ← User images from Telegram
+├── telegram-bot/       ← Bot code (do not modify unless asked)
+│   └── data/bot.db     ← Conversation history
+├── venv/               ← Python venv with Patchright
+└── .claude/            ← Config files
+    ├── SOUL.md, USER.md, MEMORY.md, CRON.md
+    ├── .env            ← Credentials
+    ├── settings.json   ← Claude Code config
+    ├── sessions/       ← Browser login cookies
+    └── scheduler/      ← Cron job scripts
+\`\`\`
+
+**Rules:**
+- NEVER change directory. Stay in ${AGENT_HOME}/agent/ at all times.
+- For new tasks: create a folder like ${AGENT_HOME}/agent/my-task/
+- But NEVER cd into it. Always use full paths from ${AGENT_HOME}/agent/
+- Example: \`mkdir -p ${AGENT_HOME}/agent/project-x && echo "hello" > ${AGENT_HOME}/agent/project-x/file.txt\`
+- NOT: \`cd ${AGENT_HOME}/agent/project-x && echo "hello" > file.txt\`
+- Images the user sends are in ${AGENT_HOME}/agent/images/
 
 ---
 
 ## Web Search vs Browser Automation
 
-These are two different tools. Use the right one.
-
-### Use web search when:
+### Use WebSearch tool when:
 - Looking up news, facts, prices, documentation, public information
-- Checking if something exists or what the current status of something is
-- Research, comparisons, summarising public content
-- Anything that doesn't require logging in
+- Anything that does not require logging in
+- Quick lookups that don't need interaction
 
 ### Use Patchright (browser automation) when:
-- You need to be logged in — Gmail, Twitter, LinkedIn, any account
+- You need to be logged in — Gmail, Twitter, YouTube, LinkedIn, any account
 - Filling in forms, clicking buttons, submitting things
-- Scraping a site that blocks simple requests
 - Taking actions on behalf of the user in a web app
-- The task cannot be done with a plain web search
+- Scraping dynamic content that requires JavaScript
+- Any site that blocks bots or requires human-like behavior
 
-## CRITICAL: Browser Automation Setup
+---
+
+## PATCHRIGHT BROWSER AUTOMATION — COMPLETE GUIDE
 
 **NEVER use Playwright. ALWAYS use Patchright.**
 
-Patchright is a drop-in Playwright replacement that bypasses anti-bot detection. It is already installed and ready to use.
+### Two Python Environments:
+1. **Poetry venv** — for telegram-bot (don't touch)
+2. **${AGENT_HOME}/venv** — for Patchright browser automation (USE THIS)
 
-### Patchright Location and Activation:
-\`\`\`bash
-# Patchright is installed here:
-${AGENT_HOME}/venv/
+### Session Files Location:
+\`${AGENT_HOME}/.claude/sessions/\` — store cookies here as JSON files
+- gmail.json, twitter.json, youtube.json, linkedin.json, etc.
 
-# To use Patchright, activate the venv first:
-source ${AGENT_HOME}/venv/bin/activate
+### Basic Patchright Script Template:
 
-# Then import in Python:
-from patchright.sync_api import sync_playwright
-# OR for async:
-from patchright.async_api import async_playwright
-\`\`\`
-
-### Patchright Usage Rules:
-- **Location**: \`${AGENT_HOME}/venv\` — activate this venv before any browser automation
-- **Session files**: \`${AGENT_HOME}/.claude/sessions/\` — load the correct session (gmail.json, twitter.json, etc.)
-- **Proxy**: If configured, ALWAYS use the proxy from \`${AGENT_HOME}/.claude/.env\` (PROXY_URL)
-- **Delays**: Add random 1-3 second delays between all browser actions
-- **Sessions**: If session expired, re-login and save new session file
-- **Credentials**: Never hardcode — always read from \`${AGENT_HOME}/.claude/.env\`
-- **IMPORTANT**: The API is identical to Playwright, just import from \`patchright\` instead of \`playwright\`
-
-### Quick Start Example (with proxy support):
-\`\`\`bash
-source ${AGENT_HOME}/venv/bin/activate
-python3 << 'PYEOF'
-from patchright.sync_api import sync_playwright
+\`\`\`python
+#!/usr/bin/env python3
 import os
+import json
+import time
+import random
+from pathlib import Path
 
-# Load proxy from env
-proxy_url = os.environ.get("PROXY_URL", "")
+# MUST use the Patchright venv
+# Run with: ${AGENT_HOME}/venv/bin/python3 script.py
 
-with sync_playwright() as p:
-    # Configure proxy if available
-    launch_options = {"headless": True}
-    if proxy_url:
-        launch_options["proxy"] = {"server": proxy_url}
+from patchright.sync_api import sync_playwright
 
-    browser = p.chromium.launch(**launch_options)
-    context = browser.new_context()
-    # Load session if needed:
-    # context = browser.new_context(storage_state="${AGENT_HOME}/.claude/sessions/gmail.json")
-    page = context.new_page()
-    page.goto("https://example.com")
-    print(page.title())
-    browser.close()
-PYEOF
+# Paths
+SESSIONS_DIR = Path("${AGENT_HOME}/.claude/sessions")
+ENV_FILE = Path("${AGENT_HOME}/.claude/.env")
+
+# Load proxy from .env (returns dict with server/username/password)
+def get_proxy():
+    if not ENV_FILE.exists():
+        return None
+
+    env_vars = {}
+    for line in ENV_FILE.read_text().splitlines():
+        if "=" in line and not line.startswith("#"):
+            key, val = line.split("=", 1)
+            env_vars[key.strip()] = val.strip()
+
+    if "PROXY_SERVER" in env_vars:
+        return {
+            "server": env_vars.get("PROXY_SERVER"),
+            "username": env_vars.get("PROXY_USER", ""),
+            "password": env_vars.get("PROXY_PASS", "")
+        }
+    return None
+
+# Human-like delay
+def human_delay(min_sec=1, max_sec=3):
+    time.sleep(random.uniform(min_sec, max_sec))
+
+# Load saved session (cookies)
+def load_session(context, site_name):
+    session_file = SESSIONS_DIR / f"{site_name}.json"
+    if session_file.exists():
+        cookies = json.loads(session_file.read_text())
+        context.add_cookies(cookies)
+        return True
+    return False
+
+# Save session after login
+def save_session(context, site_name):
+    session_file = SESSIONS_DIR / f"{site_name}.json"
+    cookies = context.cookies()
+    session_file.write_text(json.dumps(cookies, indent=2))
+
+# Main browser automation
+def run_browser_task():
+    proxy = get_proxy()
+
+    with sync_playwright() as p:
+        # Launch Firefox (more reliable than Chromium)
+        launch_args = {"headless": True}
+        if proxy:
+            launch_args["proxy"] = proxy  # Already a dict with server/username/password
+
+        browser = p.firefox.launch(**launch_args)
+        context = browser.new_context()
+
+        # Load existing session
+        load_session(context, "youtube")  # or gmail, twitter, etc.
+
+        page = context.new_page()
+
+        # Your automation here
+        page.goto("https://youtube.com")
+        human_delay()
+
+        # ... do stuff ...
+
+        # Save session if logged in
+        save_session(context, "youtube")
+
+        browser.close()
+
+if __name__ == "__main__":
+    run_browser_task()
 \`\`\`
 
-### Proxy Configuration:
-- Proxy URL is stored in \`${AGENT_HOME}/.claude/.env\` as \`PROXY_URL\`
-- Format: \`http://user:pass@host:port\` or \`socks5://user:pass@host:port\`
-- If PROXY_URL is empty, connect directly (no proxy)
-- Residential proxies are recommended for anti-detection (BrightData, IPRoyal, etc.)
+### Running Patchright Scripts:
+
+Always use the full path to the venv Python:
+\`\`\`bash
+${AGENT_HOME}/venv/bin/python3 ${AGENT_HOME}/agent/my-script.py
+\`\`\`
+
+Or activate first:
+\`\`\`bash
+source ${AGENT_HOME}/venv/bin/activate && python3 ${AGENT_HOME}/agent/my-script.py
+\`\`\`
+
+### First-Time Login (Manual Session Save):
+
+When logging into a new site for the first time:
+1. Run browser with \`headless=False\` if possible, or use the script above
+2. Navigate to login page
+3. Enter credentials (from ${AGENT_HOME}/.claude/.env)
+4. Complete any 2FA
+5. Call \`save_session(context, "sitename")\` to save cookies
+6. Future runs will auto-login using saved cookies
+
+### Important Rules:
+- Always add \`human_delay()\` between actions (1-3 seconds)
+- Always try to \`load_session()\` before navigating
+- Always \`save_session()\` after successful login
+- Use proxy if PROXY_SERVER is set in .env
+- Handle errors gracefully — sites change, sessions expire
+- If session expired, you may need to re-login manually
 
 ---
 
-## Directory Rules
-- Working directory is always \`${AGENT_HOME}/agent/\`
-- Never switch out of this directory in the bot context
-- Tasks created directly inside \`${AGENT_HOME}/agent/\`
-- Create folders: \`mkdir -p ${AGENT_HOME}/agent/task-name\`
-- Work inside them via bash without ever leaving agent directory
+## PENDING TASKS (Survive Restarts)
 
----
+If you need to restart (for any reason) but still have work to do afterward:
 
-## Natural Language Switching
-- "switch to [task]" / "work on [task]" → bash commands in \`${AGENT_HOME}/agent/task-name/\`
-- "back to assistant" / "stop coding" → return to normal mode
-- Never make the user type /cd manually
+**Before restarting**, save the remaining task:
+\`\`\`bash
+echo "What I need to do after restart" > ${AGENT_HOME}/.claude/pending_task.md
+\`\`\`
 
----
+Then restart. After restart, the bot will:
+1. Send "🟢 Online"
+2. Read pending_task.md and continue the work
+3. Delete the file
 
-## How Telegram Works
-
-You never send messages to Telegram directly. You produce output. The Telegram bot handles delivery.
-
-When someone texts you:
-- User texts Telegram → bot receives it → bot passes it to Claude Code → Claude produces output → bot sends it back → user sees the reply
-
-For scheduled jobs:
-- Cron fires a script → script calls Claude → script captures output → script sends to Telegram via curl
-
-You produce text. The script or bot delivers it. You never touch Telegram directly.
+Use this whenever:
+- A task requires a restart mid-way
+- You need to restart for updates but have unfinished work
+- Any situation where restart interrupts your current task
 
 ---
 
 ## Scheduled Tasks
 
-See \`${AGENT_HOME}/.claude/CRON.md\` for full details on how scheduling works, the two script types, templates, and how to create new scheduled jobs.
-
-Rule: all scripts run from \`${AGENT_HOME}/agent/\` — always. Never change directory.
-
----
-
-## Telegram (Conversation Rules)
-- Responses go back through the Telegram bot automatically — just produce clean output
-- Short paragraphs, readable on mobile
-- Break long outputs into multiple messages if needed
-- Proactive scheduled messages should be tight and scannable
-
----
-
-## Skills
-
-Skills live in \`${AGENT_HOME}/.claude/skills/\`. Read the relevant skill before any specialised task.
-
-Two meta-skills are pre-installed:
-
-**find-skills** — use this when ${USER_NAME} asks for something you don't have a skill for yet.
-Search skills.sh for an existing skill before building from scratch.
-\`npx skillsadd owner/repo/skill-name\` installs it into \`${AGENT_HOME}/.claude/skills/\`.
-
-**skill-creator** — use this when ${USER_NAME} says something like:
-- "that was perfect"
-- "remember how you did that"
-- "save that as a skill"
-- or when you notice a pattern worth preserving
-
-Use skill-creator to package the behaviour into a reusable skill and save it to \`${AGENT_HOME}/.claude/skills/\`. Do this proactively — if you handled something exceptionally well, suggest turning it into a skill.
-
-Install new skills from the public directory: https://skills.sh
-Command: \`npx skillsadd owner/repo/skill-name\`
+See ${AGENT_HOME}/.claude/CRON.md for full details on scheduling.
 
 ---
 
 ## Security
-- Never expose credentials or session files in responses
+- Never expose credentials in responses
 - Never run as root
-- Read credentials from \`${AGENT_HOME}/.claude/.env\`
-- Confirm before any destructive action
+- Read credentials from ${AGENT_HOME}/.claude/.env
+- Confirm before any destructive action (deleting files, dropping databases, etc)
 
----
-
-## General
-- Be proactive — flag important things unprompted
-- Be direct — no fluff
-- Search web before saying you don't know
-- Complete tasks fully
-- Tell user when a task will take time
 CLAUDEMD
 
 log "CLAUDE.md created"
@@ -1130,8 +1260,10 @@ TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_USER_ID=${TELEGRAM_USER_ID}
 
 # Residential proxy for Patchright (anti-detection)
-# Format: http://user:pass@host:port or socks5://user:pass@host:port
-PROXY_URL=${PROXY_URL}
+# Split format for proper authentication
+PROXY_SERVER=${PROXY_SERVER}
+PROXY_USER=${PROXY_USER}
+PROXY_PASS=${PROXY_PASS}
 
 # Fill in when ready for browser automation
 GMAIL_EMAIL=
